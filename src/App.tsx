@@ -2,6 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Event } from './contracts/event.ts';
 import { EventLog } from './pipeline/events.ts';
 import { runPipeline, STAGE_ORDER } from './pipeline/run.ts';
+import {
+  browserEnv,
+  CHAIN,
+  MODEL_CARD_TEXT,
+  MODEL_PLAN,
+  PREDICTION_LABEL,
+  predictBackends,
+  type Prediction,
+} from './pipeline/model-plan.ts';
 import type { PipelineResult, StageName } from './pipeline/types.ts';
 
 interface BeforeInstallPromptEvent extends globalThis.Event {
@@ -159,6 +168,67 @@ function syntheticBlob(): Blob {
   return new Blob([bytes], { type: 'application/pdf' });
 }
 
+const yesNo = (b: boolean): string => (b ? 'likely available' : 'not detected');
+
+function usePrediction(): Prediction | null {
+  const [p, setP] = useState<Prediction | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void predictBackends(browserEnv()).then((r) => {
+      if (!cancelled) setP(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return p;
+}
+
+function ModelPlanCard() {
+  const prediction = usePrediction();
+  return (
+    <section className="card card-wide" data-testid="model-plan">
+      <h2>Answer: planned model and backend chain</h2>
+      <p data-testid="model-card">{MODEL_CARD_TEXT}</p>
+      <ul className="reqs">
+        <li data-testid="plan-webgpu">
+          WebGPU: {MODEL_PLAN.webgpu.dtype}, {MODEL_PLAN.webgpu.bytes.toLocaleString('en-US')} B
+        </li>
+        <li data-testid="plan-wasm">
+          WebAssembly: {MODEL_PLAN.wasm.dtype}, {MODEL_PLAN.wasm.bytes.toLocaleString('en-US')} B
+        </li>
+        <li data-testid="plan-source">
+          Source: <code>{MODEL_PLAN.source}</code>
+        </li>
+      </ul>
+      <h3>Fallback chain (in order)</h3>
+      <ol data-testid="chain">
+        {CHAIN.map((r) => (
+          <li key={r.id}>{r.label}</li>
+        ))}
+      </ol>
+      <h3>This browser</h3>
+      <dl className="kv" data-testid="prediction">
+        <dt>WebGPU</dt>
+        <dd data-testid="pred-webgpu">{prediction ? yesNo(prediction.webgpu) : 'checking'}</dd>
+        <dt>WebAssembly</dt>
+        <dd data-testid="pred-wasm">{prediction ? yesNo(prediction.wasm) : 'checking'}</dd>
+        <dt>Chrome built-in model API</dt>
+        <dd data-testid="pred-builtin">
+          {prediction
+            ? prediction.builtinPresent
+              ? 'present (opt-in only)'
+              : 'not detected'
+            : 'checking'}
+        </dd>
+      </dl>
+      <p className="muted small" data-testid="prediction-label">
+        {PREDICTION_LABEL}
+      </p>
+    </section>
+  );
+}
+
 export function App() {
   const online = useOnline();
   const { canInstall, installed, install } = useInstallPrompt();
@@ -278,6 +348,8 @@ export function App() {
           ) : null}
         </section>
 
+        <ModelPlanCard />
+
         <section id="requirements" className="card box" data-testid="requirements">
           <h2>Browser requirements</h2>
           <ul className="reqs">
@@ -307,8 +379,9 @@ export function App() {
               triage, extraction, glyph gate, local store, model answer) lands in Sprint 5.
             </li>
             <li>
-              No model: nothing is downloaded and the answer stage echoes a MockAdapter. The runtime
-              backend adapter arrives in Sprint 2; dockit wires a local model in Sprint 5.
+              No model and no inference: nothing is downloaded or loaded and the answer stage echoes
+              a MockAdapter. The planned-model card above is a plan plus a feature-detection
+              prediction only; dockit wires a local model in Sprint 5.
             </li>
             <li>
               The capability profile card is not wired: runtime's detectCapabilities() is not called

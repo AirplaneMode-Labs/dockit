@@ -106,6 +106,8 @@ test.describe('dockit installable PWA', () => {
     expect(directives.get('object-src')).toEqual(["'none'"]);
     expect(directives.get('base-uri')).toEqual(["'none'"]);
     expect(directives.get('script-src')).toEqual(["'self'", "'wasm-unsafe-eval'"]);
+    // BUG-S1-D-02: the app has no forms to submit, so form-action is 'none', not 'self'.
+    expect(directives.get('form-action')).toEqual(["'none'"]);
   });
 
   test('service worker registers, activates and precaches every entry; manifest is valid', async ({

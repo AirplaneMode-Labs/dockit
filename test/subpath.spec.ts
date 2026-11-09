@@ -241,6 +241,13 @@ test.describe('dockit under the /dockit/ sub-path', () => {
   test('home screen states that document processing is not built and lists six stub stages', async ({
     page,
   }) => {
+    const consoleErrors: string[] = [];
+    const requests: string[] = [];
+    page.on('console', (m) => {
+      if (m.type() === 'error') consoleErrors.push(m.text());
+    });
+    page.on('pageerror', (e) => consoleErrors.push(String(e)));
+    page.on('request', (r) => requests.push(r.url()));
     await page.goto('./');
     const banner = page.getByTestId('placeholder-banner');
     await expect(banner).toBeVisible();
@@ -261,6 +268,24 @@ test.describe('dockit under the /dockit/ sub-path', () => {
     for (const id of ['service-worker', 'cache-api', 'install-prompt', 'secure-context']) {
       await expect(page.getByTestId(`req-${id}`)).toHaveAttribute('data-ok', 'true');
     }
+    // D5-03: planned model card; a prediction only, no inference, no extra requests.
+    await expect(page.getByTestId('model-card')).toContainText(
+      'Planned production model: Qwen3-1.7B (Apache-2.0)',
+    );
+    await expect(page.getByTestId('plan-source')).toContainText(
+      'onnx-community/Qwen3-1.7B-ONNX@3231b522c6e7',
+    );
+    await expect(page.getByTestId('chain').locator('li')).toHaveCount(4);
+    await expect(page.getByTestId('prediction-label')).toHaveText(
+      'prediction; nothing is downloaded or loaded; inference arrives in Sprint 5',
+    );
+    await expect(page.getByTestId('pred-wasm')).toHaveText('likely available');
+    expect(consoleErrors).toEqual([]);
+    expect(
+      requests.filter((u) => !u.startsWith(PREFIX)),
+      requests.join('\n'),
+    ).toEqual([]);
+    expect(requests.some((u) => /\.(onnx|safetensors)|huggingface/u.test(u))).toBe(false);
   });
 
   test('requirements are computed by feature detection, not a static list', async ({ browser }) => {

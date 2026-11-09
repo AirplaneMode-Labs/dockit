@@ -262,3 +262,8 @@ button:disabled {
 .foot a {
   color: var(--accent);
 }
+
+.card h3 {
+  margin: 1rem 0 0.4rem;
+  font-size: 1rem;
+}

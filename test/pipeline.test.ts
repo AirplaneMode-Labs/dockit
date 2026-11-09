@@ -243,3 +243,123 @@ describe('trust set', () => {
     expect(Object.isFrozen(TRUSTED_KEYS)).toBe(true);
   });
 });
+
+describe('planned model and backend chain card (D5-03)', () => {
+  it('holds the model-card wording, sizes, source and chain as constants', async () => {
+    const plan = await import('../src/pipeline/model-plan.ts');
+    expect(plan.MODEL_PLAN.name).toBe('Qwen3-1.7B');
+    expect(plan.MODEL_PLAN.licence).toBe('Apache-2.0');
+    expect(plan.MODEL_PLAN.webgpu).toEqual({ dtype: 'q4f16', bytes: 1_426_069_098 });
+    expect(plan.MODEL_PLAN.wasm).toEqual({ dtype: 'q8', bytes: 1_742_387_852 });
+    expect(plan.MODEL_PLAN.source).toBe('onnx-community/Qwen3-1.7B-ONNX@3231b522c6e7');
+    expect(plan.MODEL_PLAN.contingency).toBe('Qwen3-0.6B');
+    expect(plan.MODEL_CARD_TEXT).toContain(
+      'Planned production model: Qwen3-1.7B (Apache-2.0), WebGPU q4f16 1.43 GB, WASM q8 1.74 GB. Provisional until the Sprint 5 measurement on an 8 GB laptop; contingency Qwen3-0.6B.',
+    );
+    expect(plan.MODEL_CARD_TEXT).not.toContain('not yet loaded in a browser');
+    expect(plan.MODEL_LOADED_IN_BROWSER).toBe(true);
+    expect(plan.MODEL_CARD_TEXT).toContain(
+      'Loaded once in a browser: a local, unscored WebGPU smoke run of five synthetic Hindi prompts on an Apple-silicon Mac, which needed ONNX Runtime graph optimisation turned off (evidence/sprint-2/D1/hindi-smoke.json).',
+    );
+    expect(plan.CHAIN.map((r) => r.id)).toEqual(['webgpu', 'wasm', 'builtin', 'refuse']);
+    expect(plan.CHAIN.find((r) => r.id === 'builtin')?.label).toContain('opt-in');
+  });
+
+  it('prediction uses only booleans and typeof/in checks: no availability(), no create(), no fetch', async () => {
+    const { predictBackends, PREDICTION_LABEL } = await import('../src/pipeline/model-plan.ts');
+    let availabilityCalls = 0;
+    let fetchCalls = 0;
+    const env = {
+      gpu: { requestAdapter: async () => ({ info: { description: 'SECRET-ADAPTER' } }) },
+      webAssembly: 'object',
+      globals: {
+        LanguageModel: {
+          availability: () => {
+            availabilityCalls++;
+            return 'available';
+          },
+          create: () => {
+            availabilityCalls++;
+          },
+        },
+      } as Record<string, unknown>,
+    };
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (() => {
+      fetchCalls++;
+      throw new Error('no fetch allowed');
+    }) as typeof fetch;
+    try {
+      const p = await predictBackends(env);
+      expect(p).toEqual({ webgpu: true, wasm: true, builtinPresent: true });
+      expect(JSON.stringify(p)).not.toContain('SECRET-ADAPTER');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    expect(availabilityCalls).toBe(0);
+    expect(fetchCalls).toBe(0);
+    expect(PREDICTION_LABEL).toBe(
+      'prediction; nothing is downloaded or loaded; inference arrives in Sprint 5',
+    );
+  });
+
+  it('predicts false when WebGPU is absent, null adapter, or requestAdapter throws', async () => {
+    const { predictBackends } = await import('../src/pipeline/model-plan.ts');
+    const base = { webAssembly: 'undefined', globals: {} as Record<string, unknown> };
+    expect(await predictBackends({ ...base, gpu: undefined })).toEqual({
+      webgpu: false,
+      wasm: false,
+      builtinPresent: false,
+    });
+    expect(
+      (await predictBackends({ ...base, gpu: { requestAdapter: async () => null } })).webgpu,
+    ).toBe(false);
+    expect(
+      (
+        await predictBackends({
+          ...base,
+          gpu: {
+            requestAdapter: async () => {
+              throw new Error('x');
+            },
+          },
+        })
+      ).webgpu,
+    ).toBe(false);
+  });
+});
+
+describe('dockit source hygiene (D5-03)', () => {
+  it('imports no inference engine and uses no HTML injection', async () => {
+    const { readdirSync, readFileSync, statSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const files: string[] = [];
+    const walk = (d: string) => {
+      for (const n of readdirSync(d)) {
+        const p = join(d, n);
+        if (statSync(p).isDirectory()) walk(p);
+        else if (/\.tsx?$/u.test(n)) files.push(p);
+      }
+    };
+    walk(join(import.meta.dirname, '..', 'src'));
+    for (const f of files) {
+      const text = readFileSync(f, 'utf8');
+      expect(text, f).not.toMatch(
+        /dangerouslySetInnerHTML|innerHTML|outerHTML|insertAdjacentHTML/u,
+      );
+      expect(text, f).not.toMatch(
+        /(from|import\()\s*['"](@huggingface|@mlc-ai|onnxruntime|web-llm)/u,
+      );
+      expect(text, f).not.toMatch(/\.availability\s*\(|LanguageModel\.create/u);
+    }
+  });
+});
+
+describe('MockAdapter against Backend adapter 0.2.0 (D5-01)', () => {
+  it("reports device 'wasm' and available() true without loading anything", async () => {
+    const a = new MockAdapter();
+    expect(a.device).toBe('wasm');
+    expect(await a.available(MockAdapter.placeholderProfile())).toBe(true);
+    await expect(a.generate('x')).rejects.toBeInstanceOf(AdapterError);
+  });
+});
