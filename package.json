@@ -1,0 +1,46 @@
+{
+  "name": "@airplanemode/dockit",
+  "version": "0.1.0-dev",
+  "private": true,
+  "description": "Offline document intelligence kit: installable PWA skeleton for offline PDF question answering (no document processing yet).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AirplaneMode-Labs/dockit"
+  },
+  "homepage": "https://github.com/AirplaneMode-Labs/dockit#readme",
+  "bugs": "https://github.com/AirplaneMode-Labs/dockit/issues",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && vite build -c vite.sw.config.ts && node scripts/inject-precache.mjs",
+    "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
+    "icons": "node scripts/make-icons.mjs",
+    "sync-contracts": "node scripts/sync-contracts.mjs",
+    "test": "vitest run",
+    "test:browser": "playwright test -c playwright.config.ts",
+    "typecheck": "tsc --noEmit",
+    "fmt": "prettier --write .",
+    "fmt:check": "prettier --check .",
+    "deps:scripts": "npm query ':attr(scripts,[postinstall]),:attr(scripts,[preinstall])'",
+    "ci": "npm run fmt:check && npm run typecheck && npm run test && npm run build"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "playwright": "1.65.0",
+    "prettier": "3.9.10",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "4.1.12"
+  }
+}

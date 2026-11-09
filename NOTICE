@@ -1,0 +1,12 @@
+Airplane Mode Labs dockit
+Copyright 2026 Tushar (jtushar53@gmail.com)
+
+This product includes software developed at Airplane Mode Labs (https://github.com/AirplaneMode-Labs).
+
+Third-party notices
+-------------------
+Runtime dependencies (bundled into the built app):
+  react, react-dom - MIT licence, Copyright (c) Meta Platforms, Inc. and affiliates.
+
+Development dependencies (not distributed) are listed in package.json with their
+own licences in node_modules/<package>/LICENSE.
