@@ -30,11 +30,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/sync-contracts.mjs --check` reports in-sync or drift per vendored contract, writes
   nothing and exits 1 on drift, matching localdata's script; Vitest cases cover check mode,
   write mode and a missing source against a temporary directory.
+- Public demo deployment: `.github/workflows/pages.yml` builds `dist/` with `npm run build` and
+  deploys it to https://airplanemode-labs.github.io/dockit/ (`pages: write` and `id-token: write`
+  on the deploy job only). The home screen now states that document processing is not built
+  yet, renders the pipeline as a Stage / Status / Lands in table, adds live browser-requirement
+  checks with the shared-origin note, a "What this demo does not do yet" box, the service
+  worker's scope and controller state, the resolved base URL and a "Built from main at <sha>"
+  line (`VITE_BUILD_SHA`, `local` for developer builds).
+- Sub-path test `test/subpath.spec.ts`: dist/ copied under `<tmp>/dockit/` and served on port
+  4191 by the shared `test/static-server.ts` (extracted from `pwa.spec.ts`); asserts the
+  registration scope ends with `/dockit/`, every request and precache key stays under
+  `/dockit/`, the manifest keeps relative `start_url` and `scope`, offline navigation and reload
+  work, and the requirements box reacts to feature detection.
+- `isStaleOwnCache()` in `src/sw-logic.ts` with Vitest cases: foreign caches such as
+  `runtime-test` and `airplanemode-localdata` survive activation, `dockit-precache-old` is
+  deleted, the current build cache is kept.
+- `persist-credentials: false` on every `actions/checkout` step.
 
 ### Changed
 
+- The service worker's activate handler deletes only caches named `dockit-precache-*` from
+  other builds instead of every cache on the origin, because all Airplane Mode Labs demos share
+  the `airplanemode-labs.github.io` origin on GitHub Pages.
+- `offline.html` says that dockit has no document processing yet and that the shell it links
+  back to is a skeleton.
 - `@vitejs/plugin-react` 5.2.0 instead of the pin-table 6.2.1 because 6.2.1 requires vite ^8;
   revisit with the vite 8 move.
+
+### Fixed
+
+- `offline.html` served for an uncached deep navigation (for example `/dockit/reports/42`)
+  rendered unstyled because its relative `./offline.css` link resolved to
+  `/dockit/reports/offline.css`. `decideRoute` now answers any `<scope>**/offline.css` GET
+  cache-first from the precached `<scope>offline.css`; paths outside the scope and cross-origin
+  requests still pass through. The page also carries `<link rel="icon" href="data:,">` and
+  `img-src 'self' data:` so Chrome no longer probes `/favicon.ico` at the shared origin root.
 
 ### Security
 

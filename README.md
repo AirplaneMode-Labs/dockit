@@ -17,6 +17,21 @@ Package names use the placeholder scope `@airplanemode` / crate names `<repo>` u
 handles are reserved; nothing is published yet. dockit is a private application package
 (`@airplanemode/dockit`, `private: true`), not a library.
 
+## Demo
+
+Live demo: <https://airplanemode-labs.github.io/dockit/>. Built from `main` by
+`.github/workflows/pages.yml` on every push; it shows only what works today and has a box titled
+"What this demo does not do yet". It runs entirely in the browser: no upload, no analytics, no
+third-party scripts or fonts.
+
+Installing from the Pages URL gives the app the scope `/dockit/`, and all Airplane Mode Labs
+demos share the `airplanemode-labs.github.io` origin, so the service worker deletes only its own
+stale `dockit-precache-*` caches and never another demo's storage. The home screen says that
+document processing is not built yet, lists the six pipeline stages with their status and the
+sprint each lands in, shows live browser-requirement checks and the service worker's scope, and
+keeps the Install button. `test/subpath.spec.ts` proves the same build under `/dockit/` on a
+server that answers 404 for everything else.
+
 ## Install
 
 Requirements: Node 22 or newer, npm, and Google Chrome for the browser tests.
@@ -56,8 +71,9 @@ inline preamble. Production builds keep the CSP verbatim.
   `scripts/inject-precache.mjs` lists every file of the built shell with its SHA-256 and a
   build hash derived from `dist/.vite/manifest.json`. On install the worker fetches each
   entry, hashes it with WebCrypto, refuses to cache anything that does not match, and only
-  then fills the cache `dockit-precache-<buildHash>`. On activate it deletes every other
-  cache. The fetch handler passes through (does not answer) any request that is not GET, is
+  then fills the cache `dockit-precache-<buildHash>`. On activate it deletes only stale
+  `dockit-precache-*` caches (the Pages origin is shared with the other demos, whose caches are
+  left alone). The fetch handler passes through (does not answer) any request that is not GET, is
   cross-origin, carries a Range header, has a path under `/assets/`, or ends with
   `/manifest.json`; navigations are network-first with the cached shell or `offline.html` as
   fallback; precached files are cache-first; nothing else is cached. If a precached file misses
@@ -99,8 +115,6 @@ time. The 8 GB Windows no-GPU laptop figures arrive with the Sprint 5 demo.
 - Tested in Chrome only (Playwright channel `chrome`). Firefox and Safari are untested.
 - The CSP is delivered by a meta tag, which cannot set `frame-ancestors`; hosting must add
   the headers listed below.
-- `offline.html` is served for uncached navigations to deep paths; its relative stylesheet
-  link does not resolve there, so it renders unstyled.
 - The icons are generated placeholders.
 - `npm run dev` runs without the service worker and without the CSP.
 
