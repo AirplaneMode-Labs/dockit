@@ -4,34 +4,6 @@ Offline document intelligence kit: an installable web app that will answer quest
 PDF documents entirely on the device, built from the Airplane Mode Labs libraries
 (pagetriage, glyphsift, localdata, runtime).
 
-## Status
-
-Skeleton. There is no document processing in this build: every pipeline stage returns a
-labelled placeholder and the UI says so in a banner. What exists is the installable PWA
-shell (web app manifest, strict content security policy, hash-verified service-worker
-precache, offline page), the pipeline stage interfaces typed against the vendored runtime
-contracts, and the tests that pin the service worker's behaviour. The first working demo
-(page triage, extraction, glyph gate, local store, local model) is Sprint 5.
-
-Package names use the placeholder scope `@airplanemode` / crate names `<repo>` until the
-handles are reserved; nothing is published yet. dockit is a private application package
-(`@airplanemode/dockit`, `private: true`), not a library.
-
-## Demo
-
-Live demo: <https://airplanemode-labs.github.io/dockit/>. Built from `main` by
-`.github/workflows/pages.yml` on every push; it shows only what works today and has a box titled
-"What this demo does not do yet". It runs entirely in the browser: no upload, no analytics, no
-third-party scripts or fonts.
-
-Installing from the Pages URL gives the app the scope `/dockit/`, and all Airplane Mode Labs
-demos share the `airplanemode-labs.github.io` origin, so the service worker deletes only its own
-stale `dockit-precache-*` caches and never another demo's storage. The home screen says that
-document processing is not built yet, lists the six pipeline stages with their status and the
-sprint each lands in, shows live browser-requirement checks and the service worker's scope, and
-keeps the Install button. `test/subpath.spec.ts` proves the same build under `/dockit/` on a
-server that answers 404 for everything else.
-
 ## Install
 
 Requirements: Node 22 or newer, npm, and Google Chrome for the browser tests.
@@ -45,6 +17,10 @@ npm ci
 `.npmrc` disables install scripts (`ignore-scripts=true`), so nothing runs during `npm ci`.
 `npm run deps:scripts` lists the packages that declare install scripts; they are not
 executed.
+
+Package names use the placeholder scope `@airplanemode` / crate names `<repo>` until the
+handles are reserved; nothing is published yet. dockit is a private application package
+(`@airplanemode/dockit`, `private: true`), not a library.
 
 ## Quick start
 
@@ -92,15 +68,49 @@ inline preamble. Production builds keep the CSP verbatim.
   validated, keys that could carry text or identifiers are refused, strings are truncated to
   1024 characters and query strings are stripped. Events go to an in-memory ring buffer shown
   in the UI.
+- `src/pipeline/model-plan.ts` holds the planned production model, its sizes and source, and the
+  backend fallback chain (WebGPU, then WebAssembly, then the opt-in Chrome built-in model, then
+  refuse), shown on the Answer card. It also holds a feature-detection prediction: the result of
+  `navigator.gpu?.requestAdapter()` is reduced to a boolean (adapter info is never read,
+  displayed or stored), `typeof WebAssembly`, and `'LanguageModel' in globalThis` only
+  (`availability()` and `create()` are never called). Display only; no inference engine is
+  imported and no request is made. `answer.ts` stays a stub.
 - `src/trust.ts` exports an empty, frozen `TRUSTED_KEYS` map. Real keys are compiled in
   before any pilot; dockit has no other trust-set code.
 
 ## Contracts
 
-`src/contracts/` vendors the five runtime contracts at spec version 0.1.0: manifest,
-capability profile, event, storage API and backend adapter. The source of truth is
-`runtime/spec`; `npm run sync-contracts` refreshes the copies from a sibling checkout and
-`test/contracts-sync.test.ts` fails on drift (it is skipped when the sibling is absent).
+`src/contracts/` vendors the six runtime contract files as published in spec release 0.2.0
+(draft), each with its own version in its header: `manifest.ts` 0.1.0, `capability-profile.ts`
+0.1.0, `event.ts` 0.1.1, `storage-api.ts` 0.1.0, `backend-adapter.ts` 0.2.0 and
+`model-descriptor.ts` 0.1.0. The source of truth is `runtime/spec`; `npm run sync-contracts`
+refreshes the copies from a sibling checkout (`--check` reports in-sync or drift per file and
+writes nothing) and `test/contracts-sync.test.ts` fails on drift (it is skipped when the sibling
+is absent).
+
+## Demo
+
+Live demo: <https://airplanemode-labs.github.io/dockit/>. Built from `main` by
+`.github/workflows/pages.yml` on every push; it shows only what works today and has a box titled
+"What this demo does not do yet". It runs entirely in the browser: no upload, no analytics, no
+third-party scripts or fonts.
+
+Installing from the Pages URL gives the app the scope `/dockit/`, and all Airplane Mode Labs
+demos share the `airplanemode-labs.github.io` origin, so the service worker deletes only its own
+stale `dockit-precache-*` caches and never another demo's storage. The home screen says that
+document processing is not built yet, lists the six pipeline stages with their status and the
+sprint each lands in, shows live browser-requirement checks and the service worker's scope, and
+keeps the Install button. Sprint 2 adds an Answer card with the planned model, the backend fallback chain and a feature-detection prediction (no inference, no request). `test/subpath.spec.ts` proves the same build under `/dockit/` on a
+server that answers 404 for everything else.
+
+### Status
+
+Skeleton. There is no document processing in this build: every pipeline stage returns a
+labelled placeholder and the UI says so in a banner. What exists is the installable PWA
+shell (web app manifest, strict content security policy, hash-verified service-worker
+precache, offline page), the pipeline stage interfaces typed against the vendored runtime
+contracts, and the tests that pin the service worker's behaviour. The first working demo
+(page triage, extraction, glyph gate, local store, local model) is Sprint 5.
 
 ## Benchmarks
 
@@ -109,6 +119,10 @@ time. The 8 GB Windows no-GPU laptop figures arrive with the Sprint 5 demo.
 
 ## Limitations
 
+- No inference until Sprint 5. The Answer card shows the planned model
+  (Qwen3-1.7B, Apache-2.0, provisional until the Sprint 5 measurement on an 8 GB laptop,
+  contingency Qwen3-0.6B; loaded once in a browser in a local, unscored WebGPU smoke run of five synthetic Hindi prompts on an Apple-silicon Mac, which needed ONNX Runtime graph optimisation turned off) and a prediction from feature detection.
+  Nothing is downloaded or loaded, and the prediction is not a promise that the model will run.
 - The pipeline emits placeholder results only: no page count, no triage, no extraction, no
   glyph scoring, no retrieval, no model answer.
 - No model is downloaded and no manifest is loaded; the trust set is empty.
@@ -129,7 +143,7 @@ Content security policy in `index.html`:
 default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self';
 img-src 'self' blob: data:; font-src 'self'; connect-src 'self'; worker-src 'self';
 frame-src 'none'; media-src 'self'; manifest-src 'self'; object-src 'none';
-base-uri 'none'; form-action 'self'
+base-uri 'none'; form-action 'none'
 ```
 
 `'wasm-unsafe-eval'` is present because the pagetriage and glyphsift WebAssembly modules
@@ -161,6 +175,10 @@ npm run test:browser   # builds, serves dist/ on 127.0.0.1:4173, runs test/pwa.s
 npm run icons          # regenerate public/icons/*.png (zero dependencies)
 npm run sync-contracts # copy ../runtime/spec/*.ts into src/contracts/
 ```
+
+Vitest is pinned at 4.1.12. With npm 10.9.8, adding or upgrading a package reports a
+peer-dependency conflict, so run `npm install --legacy-peer-deps` for that one command. `npm ci`
+from the committed lockfile needs no flag. We revisit this when vitest's peer range is updated.
 
 On Linux CI the browser step is preceded by `npx playwright install --with-deps chrome`;
 locally the installed Chrome is used and nothing is downloaded.

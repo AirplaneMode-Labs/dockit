@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Model card status is now the exact smoke-run sentence (`MODEL_LOADED_IN_BROWSER = true`); the
+  card still never calls `availability()` and downloads nothing. README sections reordered to
+  the conventions order, Status folded into Demo. (T1-S2-04, T3-S2-004)
+
 ### Added
+
+- Answer card showing the planned production model (Qwen3-1.7B, Apache-2.0; provisional until
+  the Sprint 5 measurement; contingency Qwen3-0.6B), its sizes, source revision and the backend
+  fallback chain, plus a feature-detection prediction labelled as such. No inference, no
+  request, no `availability()` call; typed constants in `src/pipeline/model-plan.ts`. (D5-03)
+- `test/csp.test.ts` pins the exact CSP string in `index.html`. (D5-02)
+- Source hygiene test: no inference-engine import, no HTML injection API in `src/`. (D5-03)
 
 - Vite + React + TypeScript installable PWA skeleton: web app manifest, generated maskable
   icons, offline page, strict content security policy delivered by a meta tag.
@@ -49,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Re-vendored the runtime contracts at spec release 0.2.0 (draft) with a per-file version map in
+  `scripts/sync-contracts.mjs`; `model-descriptor.ts` added, so six files are vendored. The local
+  `MockAdapter` gains `device: 'wasm'` and `available()` returning true. (D5-01)
 - The service worker's activate handler deletes only caches named `dockit-precache-*` from
   other builds instead of every cache on the origin, because all Airplane Mode Labs demos share
   the `airplanemode-labs.github.io` origin on GitHub Pages.
@@ -59,6 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Model card loaded-once sentence now ends with the evidence citation, as in runtime/README.md. (T3-S2-R1-02)
+
 - `offline.html` served for an uncached deep navigation (for example `/dockit/reports/42`)
   rendered unstyled because its relative `./offline.css` link resolved to
   `/dockit/reports/offline.css`. `decideRoute` now answers any `<scope>**/offline.css` GET
@@ -68,6 +86,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- CI no longer runs `npx playwright install --with-deps chrome`; it checks the preinstalled Google Chrome with `google-chrome --version` and fails if missing, as in runtime. Configured, not yet executed. (S1-064)
+
+- CSP `form-action 'self'` changed to `form-action 'none'`; the app has no forms. The diff is
+  that one token. (BUG-S1-D-02, D5-02)
 - The service worker's cache-first path fails closed: when a precached URL misses the cache
   and its re-fetch does not match the recorded SHA-256 (or is not a basic 200 response), the
   worker answers a navigation with the precached offline page and anything else with a
