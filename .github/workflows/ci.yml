@@ -36,8 +36,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run ci
-      # Install scripts are disabled by .npmrc, so the browser install is an explicit step.
-      - if: runner.os == 'Linux'
-        run: npx playwright install --with-deps chrome
+      # Playwright uses the preinstalled Google Chrome (channel "chrome"); no browser download.
+      # Configured, not yet executed: this has not run on GitHub.
+      - name: Check the preinstalled Google Chrome (Linux only)
+        if: runner.os == 'Linux'
+        run: google-chrome --version || { echo "Google Chrome is not installed on this runner" >&2; exit 1; }
       - if: runner.os == 'Linux'
         run: npm run test:browser
