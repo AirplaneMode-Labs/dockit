@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `ci.yml`: the preinstalled-Chrome check first ran on GitHub on 9 Nov 2026; the comment no longer calls it
+  "configured, not yet executed".
 - Model card status is now the exact smoke-run sentence (`MODEL_LOADED_IN_BROWSER = true`); the
   card still never calls `availability()` and downloads nothing. README sections reordered to
   the conventions order, Status folded into Demo. (T1-S2-04, T3-S2-004)

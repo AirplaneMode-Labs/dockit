@@ -37,7 +37,7 @@ jobs:
       - run: npm ci
       - run: npm run ci
       # Playwright uses the preinstalled Google Chrome (channel "chrome"); no browser download.
-      # Configured, not yet executed: this has not run on GitHub.
+      # First ran on GitHub on 9 Nov 2026.
       - name: Check the preinstalled Google Chrome (Linux only)
         if: runner.os == 'Linux'
         run: google-chrome --version || { echo "Google Chrome is not installed on this runner" >&2; exit 1; }
