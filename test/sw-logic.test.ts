@@ -6,6 +6,7 @@ import {
   hex,
   isCacheable,
   isCurrentCache,
+  isStaleOwnCache,
   normaliseKey,
   onVerifyFailure,
   resolvePrecache,
@@ -137,6 +138,45 @@ describe('cache decisions', () => {
     expect(route).toMatchObject({ fallback: 'shell', shell: `${ORIGIN}/dockit/index.html` });
   });
 
+  describe('offline.css requested from a deep path under the scope', () => {
+    // The offline fallback page links `./offline.css`; served for a navigation to
+    // /dockit/reports/42 that resolves to /dockit/reports/offline.css, which is answered by the
+    // precached scope-level copy so the fallback is styled at any depth.
+    const scope = `${ORIGIN}/dockit/`;
+    const entries = resolvePrecache(
+      [...PRECACHE, { url: './offline.css', sha256: 'f'.repeat(64) }],
+      scope,
+    );
+    const c = ctx({ scopePath: '/dockit/', precached: new Set(entries.map((e) => e.key)) });
+
+    it('maps <scope>**/offline.css to the precached <scope>offline.css, cache-first', () => {
+      for (const path of ['/dockit/reports/offline.css', '/dockit/a/b/c/offline.css']) {
+        const route = decideRoute(req({ url: `${ORIGIN}${path}` }), c);
+        expect(route).toEqual({ action: 'cache-first', key: `${ORIGIN}/dockit/offline.css` });
+      }
+    });
+
+    it('still serves <scope>offline.css itself cache-first under the same key', () => {
+      const route = decideRoute(req({ url: `${ORIGIN}/dockit/offline.css?v=2` }), c);
+      expect(route).toEqual({ action: 'cache-first', key: `${ORIGIN}/dockit/offline.css` });
+    });
+
+    it('passes through offline.css outside the scope', () => {
+      const route = decideRoute(req({ url: `${ORIGIN}/other/offline.css` }), c);
+      expect(route).toEqual({ action: 'pass-through', reason: 'not-precached' });
+    });
+
+    it('passes through a cross-origin offline.css', () => {
+      const route = decideRoute(req({ url: 'https://example.invalid/dockit/offline.css' }), c);
+      expect(route).toEqual({ action: 'pass-through', reason: 'cross-origin' });
+    });
+
+    it('does not match a file that merely ends in offline.css without a path separator', () => {
+      const route = decideRoute(req({ url: `${ORIGIN}/dockit/reports/not-offline.css` }), c);
+      expect(route).toEqual({ action: 'pass-through', reason: 'not-precached' });
+    });
+  });
+
   it('caches only GET responses with status 200 and type basic', () => {
     expect(isCacheable('GET', { status: 200, type: 'basic' })).toBe(true);
     expect(isCacheable('GET', { status: 206, type: 'basic' })).toBe(false);
@@ -163,6 +203,31 @@ describe('cache naming and precache resolution', () => {
 
   it('rejects an empty build hash', () => {
     expect(() => cacheName('')).toThrow(TypeError);
+  });
+
+  describe('activate cleanup on a shared origin deletes only stale dockit caches', () => {
+    const HASH = '0123abcd';
+
+    it('keeps caches that belong to other demos on the same origin', () => {
+      expect(isStaleOwnCache('runtime-test', HASH)).toBe(false);
+      expect(isStaleOwnCache('airplanemode-localdata', HASH)).toBe(false);
+      expect(isStaleOwnCache('airplanemode-runtime', HASH)).toBe(false);
+    });
+
+    it('deletes a dockit cache from an earlier build', () => {
+      expect(isStaleOwnCache('dockit-precache-old', HASH)).toBe(true);
+      expect(isStaleOwnCache(`${CACHE_PREFIX}ffffffff`, HASH)).toBe(true);
+    });
+
+    it('keeps the current build cache', () => {
+      expect(isStaleOwnCache(`${CACHE_PREFIX}${HASH}`, HASH)).toBe(false);
+      expect(isStaleOwnCache(cacheName(HASH), HASH)).toBe(false);
+    });
+
+    it('does not treat a name that merely contains the prefix as its own', () => {
+      expect(isStaleOwnCache('x-dockit-precache-old', HASH)).toBe(false);
+      expect(isStaleOwnCache('dockit-precache', HASH)).toBe(false);
+    });
   });
 
   it('resolves relative precache URLs against the scope and keeps the hash', () => {

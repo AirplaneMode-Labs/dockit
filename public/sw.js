@@ -62,10 +62,11 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
+      // Shared origin: only stale dockit-precache-* caches are deleted, never another demo's.
       const names = await caches.keys();
       await Promise.all(
         names
-          .filter((name) => !SW_LOGIC.isCurrentCache(name, BUILD_HASH))
+          .filter((name) => SW_LOGIC.isStaleOwnCache(name, BUILD_HASH))
           .map((name) => caches.delete(name)),
       );
       await self.clients.claim();

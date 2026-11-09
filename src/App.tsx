@@ -9,14 +9,58 @@ interface BeforeInstallPromptEvent extends globalThis.Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
 }
 
-const STAGE_LABELS: Record<StageName, { title: string; placeholder: string }> = {
-  pdf: { title: 'PDF', placeholder: 'page count: unknown (pagetriage wasm, Sprint 5)' },
-  triage: { title: 'Page triage', placeholder: 'what is on each page: unknown' },
-  extract: { title: 'Extraction', placeholder: 'text layer or OCR: none' },
-  glyphGate: { title: 'Glyph gate', placeholder: 'glyphsift clean fraction: not measured' },
-  store: { title: 'Local store', placeholder: 'in-memory StorageApi; OPFS via localdata later' },
-  answer: { title: 'Model answer', placeholder: 'MockAdapter echo; no model downloaded' },
+/** Every stage is a stub in this build; the text is the same for all six on purpose. */
+const STAGE_STATUS = 'not built (stub returns a labelled placeholder)';
+
+const STAGE_LABELS: Record<StageName, { title: string; landsIn: string }> = {
+  pdf: { title: 'PDF (page count via pagetriage wasm)', landsIn: 'Sprint 5' },
+  triage: { title: 'Page triage (what is on each page)', landsIn: 'Sprint 5' },
+  extract: { title: 'Extraction (text layer or OCR)', landsIn: 'Sprint 5' },
+  glyphGate: { title: 'Glyph gate (glyphsift clean fraction)', landsIn: 'Sprint 5' },
+  store: { title: 'Local store (localdata over OPFS)', landsIn: 'Sprint 4 (localdata)' },
+  answer: { title: 'Model answer (local model)', landsIn: 'Sprint 5' },
 };
+
+/** Set by the Pages workflow (VITE_BUILD_SHA=$GITHUB_SHA); 'local' for a developer build. */
+const BUILD_SHA: string = String(import.meta.env['VITE_BUILD_SHA'] ?? 'local').slice(0, 12);
+
+interface Requirement {
+  id: string;
+  label: string;
+  note: string;
+  ok: boolean;
+}
+
+/** Feature detection at load; nothing here is a static list. */
+function detectRequirements(): Requirement[] {
+  const nav = navigator as Navigator & { serviceWorker?: unknown };
+  return [
+    {
+      id: 'service-worker',
+      label: 'Service Worker',
+      note: 'registers ./sw.js and serves the shell offline',
+      ok: 'serviceWorker' in nav && nav.serviceWorker !== undefined,
+    },
+    {
+      id: 'cache-api',
+      label: 'Cache API',
+      note: 'holds the hash-verified precache',
+      ok: typeof caches !== 'undefined' && typeof caches.open === 'function',
+    },
+    {
+      id: 'install-prompt',
+      label: 'Install prompt (beforeinstallprompt)',
+      note: 'Chromium-only; other browsers install from their own menu or not at all',
+      ok: 'onbeforeinstallprompt' in window,
+    },
+    {
+      id: 'secure-context',
+      label: 'Secure context (https or localhost)',
+      note: 'service workers and installation require it',
+      ok: window.isSecureContext === true,
+    },
+  ];
+}
 
 function useOnline(): boolean {
   const [online, setOnline] = useState(() => navigator.onLine);
@@ -67,6 +111,47 @@ function useInstallPrompt(): { canInstall: boolean; installed: boolean; install:
   return { canInstall, installed, install };
 }
 
+interface WorkerState {
+  scope: string;
+  worker: string;
+  controller: string;
+}
+
+/** Registration scope and controller state, refreshed on every lifecycle change. */
+function useServiceWorkerState(): WorkerState {
+  const [state, setState] = useState<WorkerState>({
+    scope: 'none',
+    worker: 'none',
+    controller: 'none',
+  });
+  useEffect(() => {
+    const sw = (navigator as Navigator & { serviceWorker?: ServiceWorkerContainer }).serviceWorker;
+    if (!sw) {
+      setState({ scope: 'unsupported', worker: 'unsupported', controller: 'unsupported' });
+      return;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      const reg = await sw.getRegistration();
+      if (cancelled) return;
+      const worker = reg?.active ?? reg?.waiting ?? reg?.installing;
+      setState({
+        scope: reg?.scope ?? 'none',
+        worker: worker ? worker.state : reg ? 'registered, no worker' : 'none',
+        controller: sw.controller ? sw.controller.state : 'none',
+      });
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 1000);
+    sw.addEventListener('controllerchange', () => void refresh());
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+  return state;
+}
+
 function syntheticBlob(): Blob {
   // Synthetic bytes generated in the page; no document is read.
   const bytes = new Uint8Array(4096);
@@ -77,6 +162,9 @@ function syntheticBlob(): Blob {
 export function App() {
   const online = useOnline();
   const { canInstall, installed, install } = useInstallPrompt();
+  const requirements = useMemo(detectRequirements, []);
+  const swState = useServiceWorkerState();
+  const baseUrl = useMemo(() => new URL(import.meta.env.BASE_URL, location.href).href, []);
   const log = useMemo(() => new EventLog(200), []);
   const [events, setEvents] = useState<Event[]>([]);
   const [result, setResult] = useState<PipelineResult | null>(null);
@@ -102,8 +190,14 @@ export function App() {
     <div className="app">
       <header className="masthead">
         <div>
-          <h1>dockit</h1>
-          <p className="tagline">Offline document intelligence kit. Skeleton build.</p>
+          <h1>dockit demo</h1>
+          <p className="tagline">
+            Everything runs in this tab. Nothing is uploaded; the only network requests are for this
+            page's own files.
+          </p>
+          <p className="build" data-testid="build-line">
+            Built from main at <code>{BUILD_SHA}</code> by <code>.github/workflows/pages.yml</code>
+          </p>
         </div>
         <div className="badges" aria-live="polite">
           <span
@@ -123,28 +217,46 @@ export function App() {
       </header>
 
       <div className="banner" role="status" data-testid="placeholder-banner">
-        Placeholder results. Nothing here processes a document yet; every stage returns a labelled
-        stub. The demo with real page triage, extraction and a local model is Sprint 5.
+        Document processing is not built yet. Every pipeline stage below returns a labelled stub;
+        what works today is the installable shell, its hash-verified offline cache and the offline
+        page. The real pipeline (page triage, extraction, glyph gate, local store, local model) is
+        Sprint 5.
       </div>
 
       <main className="grid">
-        <section className="card">
+        <section className="card card-wide">
           <h2>Pipeline</h2>
-          <ol className="stages">
-            {STAGE_ORDER.map((stage) => {
-              const rec = result?.stages.find((s) => s.stage === stage);
-              return (
-                <li key={stage} data-testid={`stage-${stage}`}>
-                  <span className="stage-title">{STAGE_LABELS[stage].title}</span>
-                  <span className="stage-detail">
-                    {rec
-                      ? `stub ran in ${rec.durationMs.toFixed(2)} ms`
-                      : STAGE_LABELS[stage].placeholder}
-                  </span>
-                </li>
-              );
-            })}
-          </ol>
+          <div className="table-wrap">
+            <table className="table pipeline" data-testid="pipeline">
+              <thead>
+                <tr>
+                  <th>Stage</th>
+                  <th>Status</th>
+                  <th>Lands in</th>
+                </tr>
+              </thead>
+              <tbody>
+                {STAGE_ORDER.map((stage) => {
+                  const rec = result?.stages.find((s) => s.stage === stage);
+                  return (
+                    <tr key={stage} data-testid={`stage-${stage}`}>
+                      <td className="stage-title">{STAGE_LABELS[stage].title}</td>
+                      <td data-testid={`status-${stage}`}>
+                        {STAGE_STATUS}
+                        {rec ? (
+                          <span className="muted">
+                            {' '}
+                            ; stub ran in {rec.durationMs.toFixed(2)} ms
+                          </span>
+                        ) : null}
+                      </td>
+                      <td>{STAGE_LABELS[stage].landsIn}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
           <label className="field">
             <span>Question</span>
             <input
@@ -166,12 +278,73 @@ export function App() {
           ) : null}
         </section>
 
+        <section id="requirements" className="card box" data-testid="requirements">
+          <h2>Browser requirements</h2>
+          <ul className="reqs">
+            {requirements.map((r) => (
+              <li key={r.id} data-testid={`req-${r.id}`} data-ok={r.ok ? 'true' : 'false'}>
+                <span className={r.ok ? 'tick' : 'cross'} aria-hidden="true">
+                  {r.ok ? '✓' : '✗'}
+                </span>{' '}
+                <span className="req-label">{r.label}</span>
+                <span className="visually-hidden">{r.ok ? ' available' : ' missing'}</span>
+                <span className="muted"> : {r.note}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="muted small" data-testid="shared-origin">
+            All Airplane Mode Labs demos share one browser origin (airplanemode-labs.github.io):
+            storage, quota, estimate() and persist() are shared between them. This demo writes only
+            under the dockit-precache-* cache.
+          </p>
+        </section>
+
+        <section id="not-yet" className="card box box-warn" data-testid="not-yet">
+          <h2>What this demo does not do yet</h2>
+          <ul>
+            <li>
+              No document processing at all: every stage is a labelled stub. The real pipeline (page
+              triage, extraction, glyph gate, local store, model answer) lands in Sprint 5.
+            </li>
+            <li>
+              No model: nothing is downloaded and the answer stage echoes a MockAdapter. The runtime
+              backend adapter arrives in Sprint 2; dockit wires a local model in Sprint 5.
+            </li>
+            <li>
+              The capability profile card is not wired: runtime's detectCapabilities() is not called
+              here yet (Sprint 5).
+            </li>
+            <li>
+              No OPFS storage: the store stage writes to memory only. localdata's OPFS driver is
+              Sprint 4 and dockit adopts it in Sprint 5.
+            </li>
+          </ul>
+        </section>
+
+        <section className="card" data-testid="sw-card">
+          <h2>Service worker</h2>
+          <dl className="kv">
+            <dt>base URL</dt>
+            <dd data-testid="base-url">{baseUrl}</dd>
+            <dt>scope</dt>
+            <dd data-testid="sw-scope">{swState.scope}</dd>
+            <dt>worker</dt>
+            <dd data-testid="sw-worker">{swState.worker}</dd>
+            <dt>controller</dt>
+            <dd data-testid="sw-controller">{swState.controller}</dd>
+          </dl>
+          <p className="muted small">
+            The worker precaches the shell after verifying every file's SHA-256 and deletes only its
+            own stale <code>dockit-precache-*</code> caches on activate.
+          </p>
+        </section>
+
         <section className="card">
           <h2>Capability profile</h2>
           <p className="muted">
-            Not measured. <code>detectCapabilities()</code> arrives with{' '}
-            <code>@airplanemode/runtime</code>; dockit will show gpu, ramGb, storageFreeGb, cores
-            and backendTier here.
+            Not measured. <code>detectCapabilities()</code> from <code>@airplanemode/runtime</code>{' '}
+            is not called in this build; dockit will show gpu, ramGb, storageFreeGb, cores and
+            backendTier here.
           </p>
           <dl className="kv">
             <dt>gpu</dt>
@@ -195,38 +368,46 @@ export function App() {
           {events.length === 0 ? (
             <p className="muted">No events yet.</p>
           ) : (
-            <table className="events">
-              <thead>
-                <tr>
-                  <th>name</th>
-                  <th>kind</th>
-                  <th>level</th>
-                  <th>durationMs</th>
-                  <th>attrs</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.map((e) => (
-                  <tr key={e.id}>
-                    <td>{e.name}</td>
-                    <td>{e.kind}</td>
-                    <td>{e.level}</td>
-                    <td>{e.durationMs === undefined ? '' : e.durationMs.toFixed(2)}</td>
-                    <td>
-                      <code>{JSON.stringify(e.attrs)}</code>
-                    </td>
+            <div className="table-wrap">
+              <table className="table events">
+                <thead>
+                  <tr>
+                    <th>name</th>
+                    <th>kind</th>
+                    <th>level</th>
+                    <th>durationMs</th>
+                    <th>attrs</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {events.map((e) => (
+                    <tr key={e.id}>
+                      <td>{e.name}</td>
+                      <td>{e.kind}</td>
+                      <td>{e.level}</td>
+                      <td>{e.durationMs === undefined ? '' : e.durationMs.toFixed(2)}</td>
+                      <td>
+                        <code>{JSON.stringify(e.attrs)}</code>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </section>
       </main>
 
       <footer className="foot">
         <p>
-          Airplane Mode Labs. Apache-2.0. This app makes no network requests other than the asset
-          and manifest URLs you pass it, and sends no telemetry.
+          <a href="https://github.com/AirplaneMode-Labs/dockit" rel="noopener">
+            dockit on GitHub
+          </a>{' '}
+          · <a href="https://airplanemode-labs.github.io/site/">Airplane Mode Labs</a> · Apache-2.0
+        </p>
+        <p>
+          This app makes no network requests other than the asset and manifest URLs you pass it, and
+          sends no telemetry.
         </p>
       </footer>
     </div>

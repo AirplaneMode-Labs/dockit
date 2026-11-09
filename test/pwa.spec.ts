@@ -1,9 +1,9 @@
 import { expect, test, type BrowserContext, type Page } from 'playwright/test';
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { join } from 'node:path';
 import { BASE_URL } from '../playwright.config.ts';
+import { closeServer, serveStatic } from './static-server.ts';
 
 const dist = join(import.meta.dirname, '..', 'dist');
 const swPath = join(dist, 'sw.js');
@@ -40,46 +40,6 @@ async function cacheNames(page: Page): Promise<string[]> {
 }
 
 const TAMPER_PORT = 4190;
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json',
-  '.webmanifest': 'application/manifest+json',
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml',
-};
-
-/** Minimal static server bound to 127.0.0.1 only, for serving a modified copy of dist/. */
-function serveStatic(dir: string, port: number): Promise<Server> {
-  const root = resolve(dir);
-  const server = createServer((req, res) => {
-    const pathname = decodeURIComponent(new URL(req.url ?? '/', 'http://127.0.0.1').pathname);
-    const rel = pathname.endsWith('/') ? `${pathname}index.html` : pathname;
-    const file = normalize(join(root, rel));
-    if (!file.startsWith(root + sep)) {
-      res.writeHead(403).end();
-      return;
-    }
-    let body: Buffer;
-    try {
-      body = readFileSync(file);
-    } catch {
-      res.writeHead(404, { 'Content-Type': 'text/plain' }).end('not found');
-      return;
-    }
-    res.writeHead(200, {
-      'Content-Type': MIME[extname(file)] ?? 'application/octet-stream',
-      'Content-Length': body.length,
-      'Cache-Control': 'no-store',
-    });
-    res.end(body);
-  });
-  return new Promise((ok, fail) => {
-    server.once('error', fail);
-    server.listen(port, '127.0.0.1', () => ok(server));
-  });
-}
 
 interface WorkerState {
   installing: string | null;
@@ -311,7 +271,7 @@ test.describe('dockit installable PWA', () => {
       expect([...hosts]).toEqual([`127.0.0.1:${TAMPER_PORT}`]);
     } finally {
       await context.close();
-      await new Promise<void>((r) => server.close(() => r()));
+      await closeServer(server);
       rmSync(tmp, { recursive: true, force: true });
     }
   });

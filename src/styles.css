@@ -192,3 +192,73 @@ button:disabled {
   color: var(--muted);
   font-size: 0.9rem;
 }
+.build {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.table-wrap {
+  overflow-x: auto;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.table th,
+.table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.pipeline {
+  margin-bottom: 12px;
+}
+.box {
+  border-left: 4px solid var(--accent);
+}
+.box-warn {
+  border-left-color: var(--warn);
+  background: var(--banner);
+  color: var(--banner-fg);
+}
+.box-warn h2 {
+  color: inherit;
+}
+.box ul {
+  padding-left: 1.2rem;
+  margin: 0;
+}
+.box li {
+  margin: 6px 0;
+}
+.reqs {
+  list-style: none;
+  padding-left: 0;
+}
+.tick {
+  color: var(--ok);
+  font-weight: 700;
+}
+.cross {
+  color: var(--warn);
+  font-weight: 700;
+}
+.req-label {
+  font-weight: 600;
+}
+.small {
+  font-size: 0.85rem;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.foot a {
+  color: var(--accent);
+}

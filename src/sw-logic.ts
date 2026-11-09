@@ -72,6 +72,15 @@ export function isCurrentCache(name: string, buildHash: string): boolean {
   return name === cacheName(buildHash);
 }
 
+/**
+ * A cache that this worker owns (its name starts with CACHE_PREFIX) but that belongs to another
+ * build. All Airplane Mode Labs demos share one browser origin on GitHub Pages, so the activate
+ * handler deletes only these and never a cache written by another demo.
+ */
+export function isStaleOwnCache(name: string, buildHash: string): boolean {
+  return name.startsWith(CACHE_PREFIX) && !isCurrentCache(name, buildHash);
+}
+
 /** Only successful, same-origin ("basic") GET responses are ever cached. */
 export function isCacheable(method: string, response: { status: number; type: string }): boolean {
   return method.toUpperCase() === 'GET' && response.status === 200 && response.type === 'basic';
@@ -118,8 +127,10 @@ export function onVerifyFailure(
 /**
  * Decides what the fetch handler does. The order of the checks is part of the contract:
  * non-GET, cross-origin, Range, /assets/, manifest.json are pass-through (the worker returns
- * without calling respondWith); then navigations are network-first; then precached URLs are
- * cache-first; everything else passes through.
+ * without calling respondWith); then navigations are network-first; then `offline.css`
+ * requested from any depth under the scope is answered by the precached scope-level copy (the
+ * offline fallback page links `./offline.css` relative to whatever deep path was navigated to);
+ * then precached URLs are cache-first; everything else passes through.
  */
 export function decideRoute(req: RouteRequest, ctx: RouteContext): Route {
   if (req.method.toUpperCase() !== 'GET') return { action: 'pass-through', reason: 'non-get' };
@@ -144,6 +155,9 @@ export function decideRoute(req: RouteRequest, ctx: RouteContext): Route {
       shell,
       offline: offlineUrl(ctx),
     };
+  }
+  if (url.pathname.startsWith(ctx.scopePath) && url.pathname.endsWith('/offline.css')) {
+    return { action: 'cache-first', key: `${ctx.origin}${ctx.scopePath}offline.css` };
   }
   if (ctx.precached.has(key)) return { action: 'cache-first', key };
   return { action: 'pass-through', reason: 'not-precached' };

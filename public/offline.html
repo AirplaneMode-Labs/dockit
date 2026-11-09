@@ -4,10 +4,11 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self' data:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./offline.css" />
     <title>dockit is offline</title>
   </head>
@@ -19,6 +20,7 @@
         The application shell is stored and works offline:
         <a href="./">open dockit</a>.
       </p>
+      <p>dockit has no document processing yet; the shell you are returning to is a skeleton.</p>
       <p class="muted">dockit, Airplane Mode Labs. Nothing was sent anywhere.</p>
     </main>
   </body>
