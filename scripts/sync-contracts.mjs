@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Copies the five contract files from the sibling runtime repository (../runtime/spec) into
+// Copies the six contract files from the sibling runtime repository (../runtime/spec) into
 // src/contracts/, prepending the vendoring header. The source of truth is runtime/spec; never edit
 // the vendored copies by hand. `--check` reports in-sync or drift per file, writes nothing and
 // exits 1 on drift. Exits 0 and prints a notice when the sibling is absent.
@@ -12,16 +12,22 @@ const root = join(here, '..');
 export const DEFAULT_SPEC_DIR = join(root, '..', 'runtime', 'spec');
 export const DEFAULT_OUT_DIR = join(root, 'src', 'contracts');
 
-export const CONTRACT_FILES = [
-  'manifest.ts',
-  'capability-profile.ts',
-  'event.ts',
-  'storage-api.ts',
-  'backend-adapter.ts',
-];
-export const SPEC_VERSION = '0.1.0';
-export const header = (file) =>
-  `// Vendored from AirplaneMode-Labs/runtime spec/${file} @ ${SPEC_VERSION}; source of truth is runtime/spec; do not edit here\n`;
+// Each contract carries its own version (spec release 0.2.0): the header names that contract's
+// version, not the release's.
+export const CONTRACT_VERSIONS = {
+  'manifest.ts': '0.1.0',
+  'capability-profile.ts': '0.1.0',
+  'event.ts': '0.1.1',
+  'storage-api.ts': '0.1.0',
+  'backend-adapter.ts': '0.2.0',
+  'model-descriptor.ts': '0.1.0',
+};
+export const CONTRACT_FILES = Object.keys(CONTRACT_VERSIONS);
+export const header = (file) => {
+  const version = CONTRACT_VERSIONS[file];
+  if (version === undefined) throw new Error(`sync-contracts: no version recorded for ${file}`);
+  return `// Vendored from AirplaneMode-Labs/runtime spec/${file} @ ${version}; source of truth is runtime/spec; do not edit here\n`;
+};
 
 export function vendoredBody(text) {
   // Strip the single-line vendoring header so the remainder can be diffed against the source.

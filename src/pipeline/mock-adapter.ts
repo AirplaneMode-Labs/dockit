@@ -57,6 +57,7 @@ function promptText(prompt: string | ChatMessage[]): string {
 export class MockAdapter implements BackendAdapter {
   readonly id = 'mock';
   readonly tier = 'none' as const;
+  readonly device = 'wasm' as const;
   #entry: ManifestEntry | null = null;
 
   static placeholderEntry(): ManifestEntry {
@@ -107,6 +108,10 @@ export class MockAdapter implements BackendAdapter {
 
   static placeholderLoadOptions(): LoadOptions {
     return { assets: MockAdapter.placeholderAssets(), profile: MockAdapter.placeholderProfile() };
+  }
+
+  async available(_profile: CapabilityProfile): Promise<boolean> {
+    return true;
   }
 
   capabilities(): { generate: boolean; embed: boolean; streaming: boolean } {

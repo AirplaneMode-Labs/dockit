@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CONTRACT_FILES, header, sync, vendoredBody } from '../scripts/sync-contracts.mjs';
+import {
+  CONTRACT_FILES,
+  CONTRACT_VERSIONS,
+  header,
+  sync,
+  vendoredBody,
+} from '../scripts/sync-contracts.mjs';
 
 const root = join(import.meta.dirname, '..');
 const specDir = join(root, '..', 'runtime', 'spec');
@@ -10,6 +16,23 @@ const contractsDir = join(root, 'src', 'contracts');
 const siblingPresent = existsSync(specDir);
 
 describe('vendored contracts', () => {
+  it('uses the per-file version map for spec release 0.2.0 and vendors six files', () => {
+    expect(CONTRACT_VERSIONS).toEqual({
+      'manifest.ts': '0.1.0',
+      'capability-profile.ts': '0.1.0',
+      'event.ts': '0.1.1',
+      'storage-api.ts': '0.1.0',
+      'backend-adapter.ts': '0.2.0',
+      'model-descriptor.ts': '0.1.0',
+    });
+    expect(CONTRACT_FILES).toHaveLength(6);
+    expect(header('event.ts')).toBe(
+      '// Vendored from AirplaneMode-Labs/runtime spec/event.ts @ 0.1.1; source of truth is runtime/spec; do not edit here\n',
+    );
+    expect(header('backend-adapter.ts')).toContain('@ 0.2.0;');
+    expect(() => header('unknown.ts')).toThrow(/no version/);
+  });
+
   it('every vendored file starts with the vendoring header', () => {
     for (const file of CONTRACT_FILES) {
       const text = readFileSync(join(contractsDir, file), 'utf8');
