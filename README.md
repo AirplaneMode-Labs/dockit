@@ -4,6 +4,17 @@ Offline document intelligence kit: an installable web app that will answer quest
 PDF documents entirely on the device, built from the Airplane Mode Labs libraries
 (pagetriage, glyphsift, localdata, runtime).
 
+## Status
+
+Skeleton (Sprint 3, 14 Nov 2026). There is no document processing in this build: every pipeline
+stage returns a labelled placeholder and the UI says so in a banner. What exists is the installable
+PWA shell (web app manifest, strict content security policy with Trusted Types for scripts,
+hash-verified service-worker precache, offline page), the pipeline stage interfaces typed against the
+runtime contracts re-vendored at spec release 0.3.0 (draft), an Answer card that shows the planned
+model and backend chain as a plan only, and the tests that pin the service worker's behaviour. No
+model is loaded and there is no inference. The first working demo (page triage, extraction, glyph
+gate, local store, local model) is Sprint 5.
+
 ## Install
 
 Requirements: Node 22 or newer, npm, and Google Chrome for the browser tests.
@@ -18,9 +29,10 @@ npm ci
 `npm run deps:scripts` lists the packages that declare install scripts; they are not
 executed.
 
-Package names use the placeholder scope `@airplanemode` / crate names `<repo>` until the
-handles are reserved; nothing is published yet. dockit is a private application package
-(`@airplanemode/dockit`, `private: true`), not a library.
+Not a registry package (the "Not published yet" sentence in the conventions does not apply here):
+dockit is a private application (`@airplanemode/dockit`, `private: true`) that is deployed to GitHub
+Pages and built from a clone, not installed from npm, PyPI or crates.io. The npm scope `@airplanemode`
+and the registry names are not reserved, and the name in `package.json` is a placeholder.
 
 ## Quick start
 
@@ -80,13 +92,17 @@ inline preamble. Production builds keep the CSP verbatim.
 
 ## Contracts
 
-`src/contracts/` vendors the six runtime contract files as published in spec release 0.2.0
-(draft), each with its own version in its header: `manifest.ts` 0.1.0, `capability-profile.ts`
-0.1.0, `event.ts` 0.1.1, `storage-api.ts` 0.1.0, `backend-adapter.ts` 0.2.0 and
-`model-descriptor.ts` 0.1.0. The source of truth is `runtime/spec`; `npm run sync-contracts`
-refreshes the copies from a sibling checkout (`--check` reports in-sync or drift per file and
-writes nothing) and `test/contracts-sync.test.ts` fails on drift (it is skipped when the sibling
-is absent).
+`src/contracts/` vendors the six runtime contract files as published in spec release 0.3.0
+(draft, 2026-11-14), each with its own version in its header: `manifest.ts` 0.1.0,
+`capability-profile.ts` 0.1.0, `event.ts` 0.1.2, `storage-api.ts` 0.1.0, `backend-adapter.ts` 0.3.0
+and `model-descriptor.ts` 0.2.0. The source of truth is `runtime/spec`. `npm run sync-contracts`
+copies them from a sibling checkout, but only after every source file's sha256 equals its line in
+runtime's SPEC-LANDED.txt; on any mismatch or missing line it fails and copies nothing. It reads
+SPEC-LANDED.txt from env `SPEC_LANDED`, else `<workspace>/evidence/sprint-3/D1/SPEC-LANDED.txt`,
+else the local scratch copy, and a `SPEC_LANDED` that names a missing file is an error rather than
+a fall-through. `--check` reports in-sync or drift per file and writes nothing.
+`test/contracts-sync.test.ts` fails on drift (it is skipped when the sibling is absent).
+dockit only uses these as types; nothing in this build calls the runtime.
 
 ## Demo
 
@@ -100,17 +116,11 @@ demos share the `airplanemode-labs.github.io` origin, so the service worker dele
 stale `dockit-precache-*` caches and never another demo's storage. The home screen says that
 document processing is not built yet, lists the six pipeline stages with their status and the
 sprint each lands in, shows live browser-requirement checks and the service worker's scope, and
-keeps the Install button. Sprint 2 adds an Answer card with the planned model, the backend fallback chain and a feature-detection prediction (no inference, no request). `test/subpath.spec.ts` proves the same build under `/dockit/` on a
+keeps the Install button. Sprint 2 added an Answer card with the planned model, the backend fallback
+chain and a feature-detection prediction (no inference, no request); Sprint 3 words that card from
+runtime's LANDED.json (the runtime engine runs in a worker; WebLLM only as "not yet") and turns on
+Trusted Types for scripts. `test/subpath.spec.ts` proves the same build under `/dockit/` on a
 server that answers 404 for everything else.
-
-### Status
-
-Skeleton. There is no document processing in this build: every pipeline stage returns a
-labelled placeholder and the UI says so in a banner. What exists is the installable PWA
-shell (web app manifest, strict content security policy, hash-verified service-worker
-precache, offline page), the pipeline stage interfaces typed against the vendored runtime
-contracts, and the tests that pin the service worker's behaviour. The first working demo
-(page triage, extraction, glyph gate, local store, local model) is Sprint 5.
 
 ## Benchmarks
 
@@ -119,6 +129,15 @@ time. The 8 GB Windows no-GPU laptop figures arrive with the Sprint 5 demo.
 
 ## Limitations
 
+- The Answer card names the Sprint 3 chain as a plan only. runtime's LANDED.json marks the worker
+  engine green and WebLLM not landed, so the card says runtime runs its engine in a worker, lists
+  the Transformers.js rungs only, and mentions WebLLM only as "no WebLLM rung yet (carried to
+  Sprint 4)" in the not-yet box. The card describes runtime, not dockit: dockit imports no engine
+  and loads nothing. `SPRINT3_LANDED` is a hand-copied constant, checked against LANDED.json by a
+  test only when that file is reachable (the workspace evidence copy or the local scratch copy).
+- The vendored contracts are only as current as the last `npm run sync-contracts`, which needs the
+  sibling `runtime` checkout and SPEC-LANDED.txt; a clone without them keeps the committed copies
+  and the drift test is skipped.
 - No inference until Sprint 5. The Answer card shows the planned model
   (Qwen3-1.7B, Apache-2.0, provisional until the Sprint 5 measurement on an 8 GB laptop,
   contingency Qwen3-0.6B; loaded once in a browser in a local, unscored WebGPU smoke run of five synthetic Hindi prompts on an Apple-silicon Mac, which needed ONNX Runtime graph optimisation turned off) and a prediction from feature detection.
@@ -143,8 +162,22 @@ Content security policy in `index.html`:
 default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self';
 img-src 'self' blob: data:; font-src 'self'; connect-src 'self'; worker-src 'self';
 frame-src 'none'; media-src 'self'; manifest-src 'self'; object-src 'none';
-base-uri 'none'; form-action 'none'
+base-uri 'none'; form-action 'none'; require-trusted-types-for 'script';
+trusted-types dockit-sw
 ```
+
+Trusted Types (Sprint 3): `require-trusted-types-for 'script'` makes every DOM script sink (for
+example `innerHTML` or `serviceWorker.register`) require a Trusted Types value. The CSP names
+exactly one policy, `dockit-sw`, with no `allow-duplicates` and no default policy. `src/main.tsx`
+creates it once through `src/trusted-types.ts`; its `createScriptURL` returns only a value
+exactly equal to `new URL('./sw.js', document.baseURI).href` and throws a `TypeError` for anything
+else, and the result is passed to `navigator.serviceWorker.register` (a plain string where
+Trusted Types is unsupported). `form-action` is `'none'` (it was `'none'` already in Sprint 2).
+React renders with DOM text and element APIs, so no broader policy was needed, and the source
+hygiene test forbids `dangerouslySetInnerHTML`. `test/pwa.spec.ts` proves 0 Trusted Types or CSP
+violations in normal use, that the service worker registers, that the offline reload works and
+that an injected `el.innerHTML = '<b>x</b>'` throws `TypeError`. `public/offline.html` keeps
+`script-src 'none'`, and `sw.js` has no `importScripts` and no `import` (tested).
 
 `'wasm-unsafe-eval'` is present because the pagetriage and glyphsift WebAssembly modules
 will be compiled from same-origin bytes; it permits `WebAssembly.compile` only, not
@@ -173,7 +206,7 @@ npm ci
 npm run ci             # fmt:check, typecheck, vitest, build
 npm run test:browser   # builds, serves dist/ on 127.0.0.1:4173, runs test/pwa.spec.ts in Chrome
 npm run icons          # regenerate public/icons/*.png (zero dependencies)
-npm run sync-contracts # copy ../runtime/spec/*.ts into src/contracts/
+npm run sync-contracts # copy ../runtime/spec/*.ts into src/contracts/ (sha256-checked, see Contracts)
 ```
 
 Vitest is pinned at 4.1.12. With npm 10.9.8, adding or upgrading a package reports a

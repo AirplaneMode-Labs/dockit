@@ -7,23 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- `ci.yml`: the preinstalled-Chrome check first ran on GitHub on 9 Nov 2026; the comment no longer calls it
-  "configured, not yet executed".
-- Model card status is now the exact smoke-run sentence (`MODEL_LOADED_IN_BROWSER = true`); the
-  card still never calls `availability()` and downloads nothing. README sections reordered to
-  the conventions order, Status folded into Demo. (T1-S2-04, T3-S2-004)
-
 ### Added
 
+- Re-vendored the runtime contracts at spec release 0.3.0 (draft, 2026-11-14): `event.ts` 0.1.2,
+  `backend-adapter.ts` 0.3.0 and `model-descriptor.ts` 0.2.0; `manifest.ts`, `capability-profile.ts`
+  and `storage-api.ts` stay 0.1.0 and byte-identical. `sync-contracts` checked every source file
+  against SPEC-LANDED.txt first (log: `sync-after-spec.log`). (D5-07)
+- `sync-contracts` finds SPEC-LANDED.txt in this order: env `SPEC_LANDED`, then
+  `<workspace>/evidence/sprint-3/D1/SPEC-LANDED.txt`, then the local scratch fallback; an env value
+  naming a missing file is an error, and any sha256 mismatch still fails with nothing copied. The
+  tampered-hash tests stay; new tests cover the lookup order and the script's exit code. (D5-07)
+- Answer card shows the Sprint 3 backend chain as a plan only, worded by runtime's LANDED.json:
+  the worker engine is green, so the card says runtime runs its engine in a worker; WebLLM did not
+  land, so it appears only as "no WebLLM rung yet (carried to Sprint 4)" in the not-yet box. dockit
+  itself loads no model. A Trusted Types line in the not-yet box. (D5-03, D5-04, D5-07)
+- `sync-contracts` verifies every source file against runtime's SPEC-LANDED.txt (sha256) and
+  fails closed. (D5-01)
 - Answer card showing the planned production model (Qwen3-1.7B, Apache-2.0; provisional until
   the Sprint 5 measurement; contingency Qwen3-0.6B), its sizes, source revision and the backend
   fallback chain, plus a feature-detection prediction labelled as such. No inference, no
   request, no `availability()` call; typed constants in `src/pipeline/model-plan.ts`. (D5-03)
 - `test/csp.test.ts` pins the exact CSP string in `index.html`. (D5-02)
 - Source hygiene test: no inference-engine import, no HTML injection API in `src/`. (D5-03)
-
 - Vite + React + TypeScript installable PWA skeleton: web app manifest, generated maskable
   icons, offline page, strict content security policy delivered by a meta tag.
 - Hand-written service worker (`public/sw.js`) with its routing rules in `src/sw-logic.ts`.
@@ -64,6 +69,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `test/pipeline.test.ts` no longer hard-codes the sprint scratch path: the LANDED.json
+  comparison looks in env `LANDED_JSON`, then `<workspace>/evidence/sprint-3/D1/LANDED.json`,
+  then the scratch copy, and still asserts the shipped constant when none is reachable, so a
+  hosted CI run does not depend on a sibling checkout. (D5-07)
+- `SPRINT3_LANDED` is `{ worker: true, webllm: false }`, copied from runtime's LANDED.json
+  (worker green, WebLLM not landed). (D5-07)
+- README: a Status section after the title (it had been folded into Demo), an Install note saying
+  dockit is an application on GitHub Pages, not a registry package, and Contracts and Limitations
+  updated for spec release 0.3.0. (T3-S3-015)
+- `ci.yml`: the preinstalled-Chrome check first ran on GitHub on 9 Nov 2026; the comment no longer calls it
+  "configured, not yet executed".
+- Model card status is now the exact smoke-run sentence (`MODEL_LOADED_IN_BROWSER = true`); the
+  card still never calls `availability()` and downloads nothing. README sections reordered to
+  the conventions order, Status folded into Demo. (T1-S2-04, T3-S2-004)
 - Re-vendored the runtime contracts at spec release 0.2.0 (draft) with a per-file version map in
   `scripts/sync-contracts.mjs`; `model-descriptor.ts` added, so six files are vendored. The local
   `MockAdapter` gains `device: 'wasm'` and `available()` returning true. (D5-01)
@@ -77,8 +96,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The built app shipped React and ReactDOM with no licence notice. `public/THIRD-PARTY-NOTICES.txt` now
+  carries the verbatim MIT texts of react, react-dom and scheduler (each headed with name and version),
+  is copied to `dist/`, is precached, is linked from the footer, and opens offline (a navigation to a
+  precached non-shell file falls back to its own cache entry, not `offline.html`). (T3-S3-028)
+- No committed script or test names a scratch directory any more: `sync-contracts.mjs` and the tests read
+  `$SPEC_LANDED` and `$LANDED_JSON` (a missing file is an error), then `<workspace>/evidence/sprint-3/D1/`;
+  a portability test guards it. (T3-S3-027, BUG-T2-S3-21)
 - Model card loaded-once sentence now ends with the evidence citation, as in runtime/README.md. (T3-S2-R1-02)
-
 - `offline.html` served for an uncached deep navigation (for example `/dockit/reports/42`)
   rendered unstyled because its relative `./offline.css` link resolved to
   `/dockit/reports/offline.css`. `decideRoute` now answers any `<scope>**/offline.css` GET
@@ -88,8 +113,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- CSP gains `require-trusted-types-for 'script'; trusted-types dockit-sw`: one named policy, no
+  `allow-duplicates`, no default policy; the service worker is registered with a TrustedScriptURL
+  that only accepts the exact `./sw.js` URL. `form-action` stays `'none'`. Tests: `csp.test.ts`,
+  `trusted-types.test.ts`, `sw-logic.test.ts` (webllm caches survive activation; `sw.js` has no
+  `importScripts` or `import`) and `pwa.spec.ts` (0 violations, `innerHTML` throws). (D5-02)
 - CI no longer runs `npx playwright install --with-deps chrome`; it checks the preinstalled Google Chrome with `google-chrome --version` and fails if missing, as in runtime. Configured, not yet executed. (S1-064)
-
 - CSP `form-action 'self'` changed to `form-action 'none'`; the app has no forms. The diff is
   that one token. (BUG-S1-D-02, D5-02)
 - The service worker's cache-first path fails closed: when a precached URL misses the cache
