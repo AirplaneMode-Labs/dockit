@@ -6,14 +6,17 @@ PDF documents entirely on the device, built from the Airplane Mode Labs librarie
 
 ## Status
 
-Skeleton (Sprint 3, 14 Nov 2026). There is no document processing in this build: every pipeline
-stage returns a labelled placeholder and the UI says so in a banner. What exists is the installable
-PWA shell (web app manifest, strict content security policy with Trusted Types for scripts,
-hash-verified service-worker precache, offline page), the pipeline stage interfaces typed against the
-runtime contracts re-vendored at spec release 0.3.0 (draft), an Answer card that shows the planned
-model and backend chain as a plan only, and the tests that pin the service worker's behaviour. No
-model is loaded and there is no inference. The first working demo (page triage, extraction, glyph
-gate, local store, local model) is Sprint 5.
+Skeleton (Sprint 4, 14 Nov 2026; committed, not pushed, so the live demo shows Sprint 2 until the owner
+pushes). There is no document processing in this build: every pipeline stage returns a labelled
+placeholder and the UI says so in a banner. What exists is the installable PWA shell (web app manifest,
+strict content security policy with Trusted Types for scripts, hash-verified service-worker precache,
+offline page), the pipeline stage interfaces typed against the runtime contracts re-vendored at spec
+release 0.4.0 (manifest 0.1.1, which is manifest spec v0.1 published in runtime/spec (committed; public
+after the owner's push); the other contracts are draft), an Answer card that shows the planned model and
+backend chain as a plan only, and the tests that pin the service worker's behaviour and the CSP. No model
+is loaded, no inference runs and no vector index is wired in. The first working demo (page triage,
+extraction, glyph gate, local store, local model) is Sprint 5. A WebLLM rung is not yet (cut from
+Sprint 4).
 
 ## Install
 
@@ -92,17 +95,24 @@ inline preamble. Production builds keep the CSP verbatim.
 
 ## Contracts
 
-`src/contracts/` vendors the six runtime contract files as published in spec release 0.3.0
-(draft, 2026-11-14), each with its own version in its header: `manifest.ts` 0.1.0,
-`capability-profile.ts` 0.1.0, `event.ts` 0.1.2, `storage-api.ts` 0.1.0, `backend-adapter.ts` 0.3.0
-and `model-descriptor.ts` 0.2.0. The source of truth is `runtime/spec`. `npm run sync-contracts`
+`src/contracts/` vendors the six runtime contract files as published in spec release 0.4.0
+(2026-11-14, untagged), each with its own version in its header: `manifest.ts` 0.1.1 (status published:
+this is manifest spec v0.1, published in runtime/spec (committed; public after the owner's push)),
+`capability-profile.ts` 0.1.0, `event.ts` 0.1.3, `storage-api.ts` 0.2.0, `backend-adapter.ts` 0.3.1 and
+`model-descriptor.ts` 0.2.1 (all draft). The source of truth is `runtime/spec`. `npm run sync-contracts`
 copies them from a sibling checkout, but only after every source file's sha256 equals its line in
 runtime's SPEC-LANDED.txt; on any mismatch or missing line it fails and copies nothing. It reads
-SPEC-LANDED.txt from env `SPEC_LANDED`, else `<workspace>/evidence/sprint-3/D1/SPEC-LANDED.txt`,
-else the local scratch copy, and a `SPEC_LANDED` that names a missing file is an error rather than
-a fall-through. `--check` reports in-sync or drift per file and writes nothing.
-`test/contracts-sync.test.ts` fails on drift (it is skipped when the sibling is absent).
-dockit only uses these as types; nothing in this build calls the runtime.
+SPEC-LANDED.txt from env `SPEC_LANDED`, else the highest-numbered
+`<workspace>/evidence/sprint-<n>/D1/SPEC-LANDED.txt` that exists (compared as a number, so sprint-10
+beats sprint-9); no scratch path is read, and a `SPEC_LANDED` that names a missing file is an error
+rather than a fall-through. Until the architect copies D1's SPEC-LANDED.txt to `evidence/sprint-4/D1/` at
+wrap-up, a run without `SPEC_LANDED` finds the Sprint 3 copy and reports `sha-mismatch` for the 0.4.0 files,
+which is the fail-closed behaviour, not a bug. `--check` reports in-sync or drift per file and writes nothing.
+`test/contracts-sync.test.ts` fails on drift (it is skipped when the sibling is absent). dockit only
+uses these as types; nothing in this build calls the runtime. Storage API 0.2.0 adds `putVectors()`,
+`indexInfo()` and a working `query()`; dockit's in-memory store implements the interface's key-value half
+only: `query()` and `putVectors()` reject `not_implemented` naming Sprint 5 and `indexInfo()` resolves
+`undefined`, because index wiring is Sprint 5.
 
 ## Demo
 
@@ -117,10 +127,13 @@ stale `dockit-precache-*` caches and never another demo's storage. The home scre
 document processing is not built yet, lists the six pipeline stages with their status and the
 sprint each lands in, shows live browser-requirement checks and the service worker's scope, and
 keeps the Install button. Sprint 2 added an Answer card with the planned model, the backend fallback
-chain and a feature-detection prediction (no inference, no request); Sprint 3 words that card from
-runtime's LANDED.json (the runtime engine runs in a worker; WebLLM only as "not yet") and turns on
-Trusted Types for scripts. `test/subpath.spec.ts` proves the same build under `/dockit/` on a
-server that answers 404 for everything else.
+chain and a feature-detection prediction (no inference, no request); Sprint 3 worded that card from
+runtime's LANDED.json (the runtime engine runs in a worker) and turned on Trusted Types for scripts.
+Sprint 4 (14 Nov 2026) re-vendors the contracts at spec release 0.4.0, words the chain sentence "runtime
+0.2.0-alpha.1 runs the engine in a worker", and says WebLLM only as "a WebLLM rung (cut from Sprint 4)" in
+the not-yet box; the CSP is byte-identical to Sprint 3, pinned by `test/csp.test.ts`. `test/subpath.spec.ts`
+proves the same build under `/dockit/` on a server that answers 404 for everything else. Until the owner
+pushes, the live demo shows Sprint 2; the refresh is proven on a local build served under `/dockit/`.
 
 ## Benchmarks
 
@@ -129,12 +142,17 @@ time. The 8 GB Windows no-GPU laptop figures arrive with the Sprint 5 demo.
 
 ## Limitations
 
-- The Answer card names the Sprint 3 chain as a plan only. runtime's LANDED.json marks the worker
-  engine green and WebLLM not landed, so the card says runtime runs its engine in a worker, lists
-  the Transformers.js rungs only, and mentions WebLLM only as "no WebLLM rung yet (carried to
-  Sprint 4)" in the not-yet box. The card describes runtime, not dockit: dockit imports no engine
-  and loads nothing. `SPRINT3_LANDED` is a hand-copied constant, checked against LANDED.json by a
-  test only when that file is reachable (the workspace evidence copy or the local scratch copy).
+- The Answer card names the runtime chain as a plan only. runtime's LANDED.json marks the worker
+  engine green and WebLLM cut, so the card says runtime 0.2.0-alpha.1 runs its engine in a worker, lists
+  the Transformers.js rungs only, and mentions WebLLM only as "a WebLLM rung (cut from Sprint 4)" in the
+  not-yet box (team decision TD-08: revisited after the Sprint 5 8 GB measurement, Sprint 6 at the
+  earliest). The card describes runtime, not dockit: dockit imports no engine and loads nothing.
+  `RUNTIME_LANDED` is a hand-copied constant, checked against LANDED.json by a test only when that file
+  is reachable (env `LANDED_JSON`, or the workspace `evidence/sprint-<n>/D1/LANDED.json` files merged in
+  sprint order, because Sprint 4's file does not repeat the worker that landed in Sprint 3).
+- No vector index and no retrieval: the in-memory store's `query()` and `putVectors()` report
+  `not_implemented`. localdata's index is wired into dockit in Sprint 5. Not measured on 8 GB: nothing
+  here has been measured on an 8 GB laptop.
 - The vendored contracts are only as current as the last `npm run sync-contracts`, which needs the
   sibling `runtime` checkout and SPEC-LANDED.txt; a clone without them keeps the committed copies
   and the drift test is skipped.

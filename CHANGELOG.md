@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Sprint 4 (14 Nov 2026, committed, not pushed): re-vendored the runtime contracts at spec release 0.4.0
+  (manifest 0.1.1, which is manifest spec v0.1 published in runtime/spec (committed; public after the owner's
+  push); capability profile 0.1.0, event 0.1.3, storage API 0.2.0, backend adapter 0.3.1 and model descriptor
+  0.2.1 are draft). `sync-contracts` checked every source file against SPEC-LANDED.txt first. (D5-01)
+- `sync-contracts` finds SPEC-LANDED.txt in this order: env `SPEC_LANDED`, then the highest-numbered
+  `<workspace>/evidence/sprint-<n>/D1/SPEC-LANDED.txt` that exists (compared as a number); no scratch path.
+  Tests first: sprint-10 beats sprint-9 and sprint-4, a newer folder without the file is skipped, and the
+  script names no scratch directory. (D5-01)
+- `test/csp.test.ts` pins the `index.html` CSP byte for byte to the Sprint 3 value, with its sha256
+  (`0ca84a34...`, from commit 5a4208b). (D5-01)
+- The in-memory store implements the Storage API 0.2.0 interface: `query()` and `putVectors()` reject
+  `not_implemented` naming Sprint 5 and `indexInfo()` resolves `undefined`; no index wiring. (D5-01)
+
 - Re-vendored the runtime contracts at spec release 0.3.0 (draft, 2026-11-14): `event.ts` 0.1.2,
   `backend-adapter.ts` 0.3.0 and `model-descriptor.ts` 0.2.0; `manifest.ts`, `capability-profile.ts`
   and `storage-api.ts` stay 0.1.0 and byte-identical. `sync-contracts` checked every source file
@@ -68,6 +81,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `persist-credentials: false` on every `actions/checkout` step.
 
 ### Changed
+
+- The chain sentence reads "runtime 0.2.0-alpha.1 runs the engine in a worker"; there is no WebLLM label in
+  the chain, and the not-yet box says "a WebLLM rung (cut from Sprint 4)" (team decision TD-08). The
+  `SPRINT3_LANDED` constant and its WebLLM branches are replaced by `RUNTIME_LANDED` (worker only) and
+  `WEBLLM_NOT_YET`; the LANDED.json cross-check reads `LANDED_JSON` or the merged
+  `evidence/sprint-<n>/D1/LANDED.json` files. (D5-01)
+- The not-yet box no longer says localdata's OPFS driver is Sprint 4: the vector index is localdata's
+  Sprint 4 work and dockit wires it in Sprint 5; the store stage is labelled Sprint 5. (D5-01)
 
 - `test/pipeline.test.ts` no longer hard-codes the sprint scratch path: the LANDED.json
   comparison looks in env `LANDED_JSON`, then `<workspace>/evidence/sprint-3/D1/LANDED.json`,
