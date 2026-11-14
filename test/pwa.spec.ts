@@ -343,15 +343,17 @@ test.describe('Trusted Types (D5-02)', () => {
     expect(csp).not.toContain('allow-duplicates');
     // The service worker registered through the policy and controls the page.
     expect(await page.evaluate(() => navigator.serviceWorker.controller?.state)).toBe('activated');
-    // The Sprint 3 chain card is a plan only: it says the runtime engine runs in a worker (LANDED.json
-    // worker green), makes no WebLLM claim (webllm not landed) and claims nothing loaded in dockit.
-    await expect(page.getByTestId('chain-sentence')).toContainText('runtime 0.2.0-alpha.0');
+    // The chain card is a plan only: it says runtime 0.2.0-alpha.1 runs the engine in a worker (LANDED.json
+    // worker green), makes no WebLLM claim (the rung is cut from Sprint 4) and claims nothing loaded in dockit.
+    await expect(page.getByTestId('chain-sentence')).toContainText('runtime 0.2.0-alpha.1');
     await expect(page.getByTestId('chain-sentence')).toContainText('runs the engine in a worker');
     await expect(page.getByTestId('chain-sentence')).toContainText('dockit loads nothing');
     await expect(page.getByTestId('model-plan')).not.toContainText('WebLLM');
-    // WebLLM appears only as 'not yet', in the not-yet box.
-    await expect(page.getByTestId('chain-not-yet')).toContainText('no WebLLM rung yet');
-    await expect(page.getByTestId('chain-not-yet')).toContainText('Sprint 4');
+    // WebLLM appears only as 'not yet (cut from Sprint 4)', in the not-yet box.
+    await expect(page.getByTestId('chain-not-yet')).toContainText(
+      'a WebLLM rung (cut from Sprint 4)',
+    );
+    await expect(page.getByTestId('chain-not-yet')).not.toContainText('carried to Sprint 4');
     await expect(page.getByTestId('tt-status')).toContainText('Trusted Types is on for scripts');
     // The offline reload still works.
     await context.setOffline(true);

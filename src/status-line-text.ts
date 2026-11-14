@@ -1,0 +1,3 @@
+/** Equal to the dockit line in site/data/demos.json, byte for byte (pinned by test/status-line.test.ts). */
+export const SPRINT_STATUS_LINE =
+  "Sprint 4 (14 Nov 2026): Skeleton: installable PWA shell that works offline, with Trusted Types on for scripts and a third-party notices page that also opens offline. Contracts re-vendored from runtime spec release 0.4.0 (manifest spec v0.1 published in runtime/spec (committed; public after the owner's push)). The Answer card shows the planned model and the backend fallback chain as a plan and a prediction only (runtime 0.2.0-alpha.1 runs its engine in a worker); every pipeline stage is a stub, with no inference until Sprint 5. Not yet: document processing, a model, a wired capability card, a WebLLM rung (cut from Sprint 4).";

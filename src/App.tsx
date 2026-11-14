@@ -10,8 +10,10 @@ import {
   MODEL_PLAN,
   PREDICTION_LABEL,
   predictBackends,
+  WEBLLM_NOT_YET,
   type Prediction,
 } from './pipeline/model-plan.ts';
+import { StatusLine } from './status-line.tsx';
 import type { PipelineResult, StageName } from './pipeline/types.ts';
 
 interface BeforeInstallPromptEvent extends globalThis.Event {
@@ -27,7 +29,7 @@ const STAGE_LABELS: Record<StageName, { title: string; landsIn: string }> = {
   triage: { title: 'Page triage (what is on each page)', landsIn: 'Sprint 5' },
   extract: { title: 'Extraction (text layer or OCR)', landsIn: 'Sprint 5' },
   glyphGate: { title: 'Glyph gate (glyphsift clean fraction)', landsIn: 'Sprint 5' },
-  store: { title: 'Local store (localdata over OPFS)', landsIn: 'Sprint 4 (localdata)' },
+  store: { title: 'Local store (localdata over OPFS)', landsIn: 'Sprint 5 (localdata wiring)' },
   answer: { title: 'Model answer (local model)', landsIn: 'Sprint 5' },
 };
 
@@ -290,6 +292,8 @@ export function App() {
         </div>
       </header>
 
+      <StatusLine />
+
       <div className="banner" role="status" data-testid="placeholder-banner">
         Document processing is not built yet. Every pipeline stage below returns a labelled stub;
         what works today is the installable shell, its hash-verified offline cache and the offline
@@ -392,13 +396,14 @@ export function App() {
               here yet (Sprint 5).
             </li>
             <li>
-              No OPFS storage: the store stage writes to memory only. localdata's OPFS driver is
-              Sprint 4 and dockit adopts it in Sprint 5.
+              No OPFS storage and no vector index: the store stage writes to memory only, and its
+              query() and putVectors() report not_implemented. localdata&apos;s vector index is
+              Sprint 4 work in a different repository; dockit wires it in Sprint 5.
             </li>
             <li data-testid="chain-not-yet">
               The chain in the card above is runtime&apos;s, not dockit&apos;s: runtime
-              0.2.0-alpha.0 runs its engine in a worker, but there is no WebLLM rung yet (carried to
-              Sprint 4) and dockit itself loads no model until Sprint 5.
+              0.2.0-alpha.1 runs its engine in a worker. Not yet: {WEBLLM_NOT_YET}. dockit itself
+              loads no model until Sprint 5.
             </li>
             <li data-testid="tt-status">
               Trusted Types is on for scripts (require-trusted-types-for 'script', one policy named
