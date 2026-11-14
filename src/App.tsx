@@ -5,6 +5,7 @@ import { runPipeline, STAGE_ORDER } from './pipeline/run.ts';
 import {
   browserEnv,
   CHAIN,
+  CHAIN_SENTENCE,
   MODEL_CARD_TEXT,
   MODEL_PLAN,
   PREDICTION_LABEL,
@@ -202,6 +203,9 @@ function ModelPlanCard() {
         </li>
       </ul>
       <h3>Fallback chain (in order)</h3>
+      <p className="muted small" data-testid="chain-sentence">
+        {CHAIN_SENTENCE}
+      </p>
       <ol data-testid="chain">
         {CHAIN.map((r) => (
           <li key={r.id}>{r.label}</li>
@@ -391,6 +395,16 @@ export function App() {
               No OPFS storage: the store stage writes to memory only. localdata's OPFS driver is
               Sprint 4 and dockit adopts it in Sprint 5.
             </li>
+            <li data-testid="chain-not-yet">
+              The chain in the card above is runtime&apos;s, not dockit&apos;s: runtime
+              0.2.0-alpha.0 runs its engine in a worker, but there is no WebLLM rung yet (carried to
+              Sprint 4) and dockit itself loads no model until Sprint 5.
+            </li>
+            <li data-testid="tt-status">
+              Trusted Types is on for scripts (require-trusted-types-for 'script', one policy named
+              dockit-sw, which only the service worker registration uses). The CSP comes from a meta
+              tag because GitHub Pages cannot send headers, so frame-ancestors is not set.
+            </li>
           </ul>
         </section>
 
@@ -477,6 +491,7 @@ export function App() {
             dockit on GitHub
           </a>{' '}
           · <a href="https://airplanemode-labs.github.io/site/">Airplane Mode Labs</a> · Apache-2.0
+          · <a href="./THIRD-PARTY-NOTICES.txt">Third-party notices</a>
         </p>
         <p>
           This app makes no network requests other than the asset and manifest URLs you pass it, and

@@ -156,6 +156,25 @@ test.describe('dockit installable PWA', () => {
     await context.setOffline(false);
   });
 
+  test('third-party notices: precached, linked in the footer, and open offline (T3-S3-028)', async ({
+    page,
+    context,
+  }) => {
+    const { precache } = readBuilt();
+    expect(precache.map((e) => e.url)).toContain('./THIRD-PARTY-NOTICES.txt');
+    await loadControlled(page);
+    const link = page.getByRole('link', { name: 'Third-party notices' });
+    await expect(link).toHaveAttribute('href', './THIRD-PARTY-NOTICES.txt');
+    await context.setOffline(true);
+    const response = await page.goto(new URL('./THIRD-PARTY-NOTICES.txt', page.url()).href);
+    expect(response!.status()).toBe(200);
+    const body = await page.locator('body').innerText();
+    expect(body).toContain('react 19.3.1');
+    expect(body).toContain('react-dom 19.3.1');
+    expect(body).toContain('Permission is hereby granted, free of charge');
+    await context.setOffline(false);
+  });
+
   test('offline navigation to an uncached route returns offline.html', async ({
     page,
     context,
@@ -296,6 +315,62 @@ test.describe('dockit installable PWA', () => {
     } finally {
       writeFileSync(swPath, original);
     }
+  });
+});
+
+test.describe('Trusted Types (D5-02)', () => {
+  test('0 TT or CSP violations, the worker registers, offline reload works, innerHTML throws', async ({
+    page,
+    context,
+  }) => {
+    const violations: string[] = [];
+    const consoleErrors: string[] = [];
+    page.on('console', (m) => {
+      if (m.type() === 'error') consoleErrors.push(m.text());
+    });
+    page.on('pageerror', (e) => consoleErrors.push(String(e)));
+    await page.addInitScript(() => {
+      (window as unknown as { __v: string[] }).__v = [];
+      document.addEventListener('securitypolicyviolation', (e) => {
+        (window as unknown as { __v: string[] }).__v.push(`${e.violatedDirective}|${e.blockedURI}`);
+      });
+    });
+    await loadControlled(page);
+    await page.getByTestId('run').click();
+    await expect(page.getByTestId('answer')).toContainText('placeholder:');
+    const { csp } = readBuilt();
+    expect(csp).toContain("require-trusted-types-for 'script'; trusted-types dockit-sw");
+    expect(csp).not.toContain('allow-duplicates');
+    // The service worker registered through the policy and controls the page.
+    expect(await page.evaluate(() => navigator.serviceWorker.controller?.state)).toBe('activated');
+    // The Sprint 3 chain card is a plan only: it says the runtime engine runs in a worker (LANDED.json
+    // worker green), makes no WebLLM claim (webllm not landed) and claims nothing loaded in dockit.
+    await expect(page.getByTestId('chain-sentence')).toContainText('runtime 0.2.0-alpha.0');
+    await expect(page.getByTestId('chain-sentence')).toContainText('runs the engine in a worker');
+    await expect(page.getByTestId('chain-sentence')).toContainText('dockit loads nothing');
+    await expect(page.getByTestId('model-plan')).not.toContainText('WebLLM');
+    // WebLLM appears only as 'not yet', in the not-yet box.
+    await expect(page.getByTestId('chain-not-yet')).toContainText('no WebLLM rung yet');
+    await expect(page.getByTestId('chain-not-yet')).toContainText('Sprint 4');
+    await expect(page.getByTestId('tt-status')).toContainText('Trusted Types is on for scripts');
+    // The offline reload still works.
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.getByTestId('run')).toBeVisible();
+    await context.setOffline(false);
+    violations.push(...(await page.evaluate(() => (window as unknown as { __v: string[] }).__v)));
+    expect(violations).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+    // Last, because the probe itself is logged as a violation: an injected HTML sink throws TypeError under require-trusted-types-for.
+    const sink = await page.evaluate(() => {
+      try {
+        document.createElement('div').innerHTML = '<b>x</b>';
+        return 'no error';
+      } catch (e) {
+        return (e as Error).name;
+      }
+    });
+    expect(sink).toBe('TypeError');
   });
 });
 

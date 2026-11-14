@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.tsx';
 import './styles.css';
+import { swScriptUrl } from './trusted-types.ts';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('dockit: #root missing');
@@ -15,8 +16,10 @@ createRoot(root).render(
 // precache manifest and strips the CSP meta for the fast-refresh preamble.
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch((err: unknown) => {
-      console.warn('dockit: service worker registration failed', err);
-    });
+    navigator.serviceWorker
+      .register(swScriptUrl(window.trustedTypes, document.baseURI))
+      .catch((err: unknown) => {
+        console.warn('dockit: service worker registration failed', err);
+      });
   });
 }

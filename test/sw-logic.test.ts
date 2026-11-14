@@ -130,6 +130,25 @@ describe('cache decisions', () => {
     });
   });
 
+  it('serves a navigation to a precached non-shell file (the notices) from its own cache entry when offline', () => {
+    const entries = resolvePrecache(
+      [...PRECACHE, { url: './THIRD-PARTY-NOTICES.txt', sha256: 'f'.repeat(64) }],
+      SCOPE,
+    );
+    const c = ctx({ precached: new Set(entries.map((e) => e.key)) });
+    const route = decideRoute(
+      req({ url: `${ORIGIN}/THIRD-PARTY-NOTICES.txt`, mode: 'navigate' }),
+      c,
+    );
+    expect(route).toEqual({
+      action: 'network-first',
+      fallback: 'cached',
+      cached: `${ORIGIN}/THIRD-PARTY-NOTICES.txt`,
+      shell: `${ORIGIN}/index.html`,
+      offline: `${ORIGIN}/offline.html`,
+    });
+  });
+
   it('resolves the shell under a non-root scope', () => {
     const scope = `${ORIGIN}/dockit/`;
     const entries = resolvePrecache(PRECACHE, scope);
@@ -276,5 +295,27 @@ describe('verification failure after a cache miss never serves an unverified bod
       ),
     );
     expect(actions).toEqual(new Set(['offline-page', 'unavailable']));
+  });
+});
+
+describe('webllm caches and the worker source (D5-02)', () => {
+  it("never treats the runtime's webllm caches as stale own caches", () => {
+    for (const name of ['webllm/config', 'webllm/model', 'webllm/wasm']) {
+      expect(isStaleOwnCache(name, 'abc123'), name).toBe(false);
+    }
+  });
+
+  it('still deletes only other dockit builds', () => {
+    expect(isStaleOwnCache('dockit-precache-old', 'new')).toBe(true);
+    expect(isStaleOwnCache('dockit-precache-new', 'new')).toBe(false);
+  });
+
+  it('public/sw.js has no importScripts and no import, static or dynamic', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const text = readFileSync(join(import.meta.dirname, '..', 'public', 'sw.js'), 'utf8');
+    expect(text).not.toMatch(/importScripts/u);
+    expect(text).not.toMatch(/^\s*import\s/mu);
+    expect(text).not.toMatch(/\bimport\s*\(/u);
   });
 });

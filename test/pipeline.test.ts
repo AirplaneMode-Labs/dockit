@@ -363,3 +363,105 @@ describe('MockAdapter against Backend adapter 0.2.0 (D5-01)', () => {
     await expect(a.generate('x')).rejects.toBeInstanceOf(AdapterError);
   });
 });
+
+describe('Sprint 3 chain labels, worded by LANDED.json (D5-03)', () => {
+  const NONE = { worker: false, webllm: false } as const;
+
+  it('default (nothing landed) is the conservative wording', async () => {
+    const plan = await import('../src/pipeline/model-plan.ts');
+    expect(plan.chainLabels(NONE)).toEqual({
+      webgpu: 'WebGPU: Transformers.js q4f16',
+      wasm: 'WebAssembly: Transformers.js q8',
+    });
+    expect(plan.chainSentence(NONE)).toBe(
+      'runtime 0.2.0-alpha.0, tested with small test models only; dockit loads nothing until Sprint 5.',
+    );
+  });
+
+  it('worker only', async () => {
+    const plan = await import('../src/pipeline/model-plan.ts');
+    const l = { worker: true, webllm: false };
+    expect(plan.chainLabels(l)).toEqual({
+      webgpu: 'WebGPU: Transformers.js q4f16, engine in a worker',
+      wasm: 'WebAssembly: Transformers.js q8, engine in a worker',
+    });
+    expect(plan.chainSentence(l)).toBe(
+      'runtime 0.2.0-alpha.0 runs the engine in a worker, tested with small test models only; dockit loads nothing until Sprint 5.',
+    );
+  });
+
+  it('worker and WebLLM', async () => {
+    const plan = await import('../src/pipeline/model-plan.ts');
+    const l = { worker: true, webllm: true };
+    expect(plan.chainLabels(l).webgpu).toBe(
+      'WebGPU: WebLLM (MLC build) or Transformers.js q4f16, engine in a worker',
+    );
+    expect(plan.chainSentence(l)).toBe(
+      'runtime 0.2.0-alpha.0 runs the engine in a worker and adds a WebLLM rung, tested with small test models only; dockit loads nothing until Sprint 5. Whether WebLLM serves the planned model is decided in Sprint 5.',
+    );
+  });
+
+  it('WebLLM without the worker names no worker', async () => {
+    const plan = await import('../src/pipeline/model-plan.ts');
+    const l = { worker: false, webllm: true };
+    expect(plan.chainLabels(l).webgpu).toBe('WebGPU: WebLLM (MLC build) or Transformers.js q4f16');
+    expect(plan.chainLabels(l).wasm).toBe('WebAssembly: Transformers.js q8');
+    expect(plan.chainSentence(l)).not.toContain('worker');
+  });
+
+  it('keeps the built-in and refuse rungs unchanged', async () => {
+    const plan = await import('../src/pipeline/model-plan.ts');
+    expect(plan.CHAIN.find((r) => r.id === 'builtin')?.label).toBe(
+      'Chrome built-in model (opt-in, outside the verified chain)',
+    );
+    expect(plan.CHAIN.find((r) => r.id === 'refuse')?.label).toBe(
+      'Refuse with a plain-language reason; nothing is downloaded silently',
+    );
+  });
+
+  it('the shipped constant equals the final LANDED.json state when that file is reachable', async () => {
+    const plan = await import('../src/pipeline/model-plan.ts');
+    const { existsSync, readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    // Lookup order mirrors scripts/sync-contracts.mjs: env LANDED_JSON (a missing file is an error),
+    // then the committed evidence copy. With neither, the cross-check is skipped.
+    const root = join(import.meta.dirname, '..');
+    const fromEnv = process.env.LANDED_JSON ?? '';
+    if (fromEnv !== '' && !existsSync(fromEnv)) {
+      throw new Error(`LANDED_JSON names a file that does not exist: ${fromEnv}`);
+    }
+    const evidence = join(root, '..', 'evidence', 'sprint-3', 'D1', 'LANDED.json');
+    const path = fromEnv !== '' ? fromEnv : existsSync(evidence) ? evidence : undefined;
+    if (path !== undefined) {
+      const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+      const green = (k: string): boolean => {
+        const v = raw[k];
+        if (typeof v === 'string') return v.startsWith('green');
+        return typeof v === 'object' && v !== null && (v as { status?: string }).status === 'green';
+      };
+      expect(plan.SPRINT3_LANDED).toEqual({ worker: green('worker'), webllm: green('webllm') });
+    }
+    // Sprint 3 final state per runtime's LANDED.json: the worker engine is green, WebLLM is not.
+    expect(plan.SPRINT3_LANDED).toEqual({ worker: true, webllm: false });
+    expect(plan.CHAIN.find((r) => r.id === 'webgpu')?.label).toBe(
+      plan.chainLabels(plan.SPRINT3_LANDED).webgpu,
+    );
+    expect(plan.CHAIN_SENTENCE).toBe(plan.chainSentence(plan.SPRINT3_LANDED));
+    if (!plan.SPRINT3_LANDED.webllm) {
+      expect(JSON.stringify([plan.CHAIN, plan.CHAIN_SENTENCE])).not.toContain('WebLLM');
+    }
+  });
+
+  it('with the worker landed and WebLLM not, the card says the engine runs in a worker and claims no dockit inference', async () => {
+    const plan = await import('../src/pipeline/model-plan.ts');
+    expect(plan.CHAIN_SENTENCE).toBe(
+      'runtime 0.2.0-alpha.0 runs the engine in a worker, tested with small test models only; dockit loads nothing until Sprint 5.',
+    );
+    expect(plan.CHAIN.find((r) => r.id === 'wasm')?.label).toBe(
+      'WebAssembly: Transformers.js q8, engine in a worker',
+    );
+    // Any WebLLM mention must be the 'not yet' kind.
+    const text = JSON.stringify([plan.CHAIN, plan.CHAIN_SENTENCE]);
+    expect(text).not.toMatch(/WebLLM/);
+  });
+});

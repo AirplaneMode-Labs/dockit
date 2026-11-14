@@ -102,7 +102,12 @@ async function networkFirst(request, route) {
   try {
     return await fetch(request);
   } catch {
-    const fallbackKey = route.fallback === 'shell' ? route.shell : route.offline;
+    const fallbackKey =
+      route.fallback === 'shell'
+        ? route.shell
+        : route.fallback === 'cached'
+          ? route.cached
+          : route.offline;
     const fallback = await caches.match(fallbackKey, { cacheName: CACHE_NAME });
     if (fallback) return fallback;
     return new Response('dockit is offline and this page is not stored on this device.', {

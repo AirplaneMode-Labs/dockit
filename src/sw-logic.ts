@@ -33,7 +33,14 @@ export type PassThroughReason =
 export type Route =
   | { action: 'pass-through'; reason: PassThroughReason }
   | { action: 'cache-first'; key: string }
-  | { action: 'network-first'; fallback: 'shell' | 'offline'; shell: string; offline: string };
+  | {
+      action: 'network-first';
+      fallback: 'shell' | 'offline' | 'cached';
+      shell: string;
+      offline: string;
+      /** Present when fallback is 'cached': the precached URL the navigation asked for. */
+      cached?: string;
+    };
 
 /**
  * What the fetch handler answers when a precached URL misses the cache and its re-fetch fails
@@ -149,6 +156,17 @@ export function decideRoute(req: RouteRequest, ctx: RouteContext): Route {
   if (req.mode === 'navigate') {
     const shell = shellUrl(ctx);
     const isShell = key === `${ctx.origin}${ctx.scopePath}` || key === shell;
+    // A navigation to another precached file (for example the third-party notices) falls back to
+    // that file's own verified cache entry, not to offline.html.
+    if (!isShell && ctx.precached.has(key)) {
+      return {
+        action: 'network-first',
+        fallback: 'cached',
+        cached: key,
+        shell,
+        offline: offlineUrl(ctx),
+      };
+    }
     return {
       action: 'network-first',
       fallback: isShell ? 'shell' : 'offline',

@@ -29,9 +29,46 @@ export const MODEL_CARD_TEXT: string = MODEL_LOADED_IN_BROWSER
 
 export type RungId = 'webgpu' | 'wasm' | 'builtin' | 'refuse';
 
+/**
+ * What runtime reported landing in Sprint 3 (D1's LANDED.json, 'green' only). The default is the
+ * conservative wording; set a flag to true only when LANDED.json marks it green (test/pipeline.test.ts
+ * compares this constant with that file). Display only: dockit imports no engine.
+ */
+export interface Sprint3Landed {
+  worker: boolean;
+  webllm: boolean;
+}
+
+export const SPRINT3_LANDED: Sprint3Landed = { worker: true, webllm: false };
+
+export function chainLabels(l: Sprint3Landed): { webgpu: string; wasm: string } {
+  const w = l.worker ? ', engine in a worker' : '';
+  const webgpu = l.webllm
+    ? `WebGPU: WebLLM (MLC build) or Transformers.js q4f16${w}`
+    : `WebGPU: Transformers.js q4f16${w}`;
+  return { webgpu, wasm: `WebAssembly: Transformers.js q8${w}` };
+}
+
+export function chainSentence(l: Sprint3Landed): string {
+  const does = [
+    ...(l.worker ? ['runs the engine in a worker'] : []),
+    ...(l.webllm ? ['adds a WebLLM rung'] : []),
+  ].join(' and ');
+  const head = does ? `runtime 0.2.0-alpha.0 ${does}` : 'runtime 0.2.0-alpha.0';
+  const tail = ', tested with small test models only; dockit loads nothing until Sprint 5.';
+  const decided = l.webllm
+    ? ' Whether WebLLM serves the planned model is decided in Sprint 5.'
+    : '';
+  return `${head}${tail}${decided}`;
+}
+
+const LABELS = chainLabels(SPRINT3_LANDED);
+
+export const CHAIN_SENTENCE: string = chainSentence(SPRINT3_LANDED);
+
 export const CHAIN: readonly { id: RungId; label: string }[] = [
-  { id: 'webgpu', label: 'WebGPU (Transformers.js, q4f16)' },
-  { id: 'wasm', label: 'WebAssembly (Transformers.js, q8)' },
+  { id: 'webgpu', label: LABELS.webgpu },
+  { id: 'wasm', label: LABELS.wasm },
   { id: 'builtin', label: 'Chrome built-in model (opt-in, outside the verified chain)' },
   { id: 'refuse', label: 'Refuse with a plain-language reason; nothing is downloaded silently' },
 ];
