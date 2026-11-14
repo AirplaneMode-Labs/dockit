@@ -20,21 +20,24 @@ const contractsDir = join(root, 'src', 'contracts');
 const siblingPresent = existsSync(specDir);
 
 describe('vendored contracts', () => {
-  it('uses the per-file version map for spec release 0.3.0 and vendors six files', () => {
+  it('uses the per-file version map for spec release 0.4.0 and vendors six files', () => {
+    // Release 0.4.0 (2026-11-14, untagged): manifest 0.1.1 is "manifest spec v0.1" (published); the others are draft.
     expect(CONTRACT_VERSIONS).toEqual({
-      'manifest.ts': '0.1.0',
+      'manifest.ts': '0.1.1',
       'capability-profile.ts': '0.1.0',
-      'event.ts': '0.1.2',
-      'storage-api.ts': '0.1.0',
-      'backend-adapter.ts': '0.3.0',
-      'model-descriptor.ts': '0.2.0',
+      'event.ts': '0.1.3',
+      'storage-api.ts': '0.2.0',
+      'backend-adapter.ts': '0.3.1',
+      'model-descriptor.ts': '0.2.1',
     });
     expect(CONTRACT_FILES).toHaveLength(6);
     expect(header('event.ts')).toBe(
-      '// Vendored from AirplaneMode-Labs/runtime spec/event.ts @ 0.1.2; source of truth is runtime/spec; do not edit here\n',
+      '// Vendored from AirplaneMode-Labs/runtime spec/event.ts @ 0.1.3; source of truth is runtime/spec; do not edit here\n',
     );
-    expect(header('backend-adapter.ts')).toContain('@ 0.3.0;');
-    expect(header('model-descriptor.ts')).toContain('@ 0.2.0;');
+    expect(header('manifest.ts')).toContain('@ 0.1.1;');
+    expect(header('storage-api.ts')).toContain('@ 0.2.0;');
+    expect(header('backend-adapter.ts')).toContain('@ 0.3.1;');
+    expect(header('model-descriptor.ts')).toContain('@ 0.2.1;');
     expect(() => header('unknown.ts')).toThrow(/no version/);
   });
 
@@ -200,34 +203,38 @@ describe('sha256 check against SPEC-LANDED.txt (D5-01)', () => {
   });
 });
 
-describe('SPEC-LANDED.txt lookup order (D5-07)', () => {
-  // Lookup order: env SPEC_LANDED, then <workspace>/evidence/sprint-3/D1/SPEC-LANDED.txt. An env value that names a missing file is an error, never a fall-through.
-  function workspace() {
+describe('SPEC-LANDED.txt lookup order (D5-01, Sprint 4)', () => {
+  // Lookup order: env SPEC_LANDED (a missing file is an error, never a fall-through), then the highest-numbered
+  // <workspace>/evidence/sprint-<n>/D1/SPEC-LANDED.txt that exists. No scratch path is read.
+  function workspace(sprints: number[] = [3]) {
     const ws = mkdtempSync(join(tmpdir(), 'dockit-ws-'));
     const repoRoot = join(ws, 'dockit');
     mkdirSync(repoRoot, { recursive: true });
-    const evidence = join(ws, 'evidence', 'sprint-3', 'D1');
-    mkdirSync(evidence, { recursive: true });
-    return { ws, repoRoot, evidenceFile: join(evidence, 'SPEC-LANDED.txt') };
+    const files = sprints.map((n) => {
+      const dir = join(ws, 'evidence', `sprint-${n}`, 'D1');
+      mkdirSync(dir, { recursive: true });
+      return join(dir, 'SPEC-LANDED.txt');
+    });
+    return { ws, repoRoot, files };
   }
   const onlyReal = (real: Set<string>) => (p: string) => real.has(p);
 
-  it('env SPEC_LANDED wins over both files', () => {
-    const { repoRoot, evidenceFile } = workspace();
+  it('env SPEC_LANDED wins over the evidence copies', () => {
+    const { repoRoot, files } = workspace([3, 4]);
     const r = resolveSpecLandedPath({
       env: { SPEC_LANDED: '/x/env.txt' },
       root: repoRoot,
-      exists: onlyReal(new Set(['/x/env.txt', evidenceFile])),
+      exists: onlyReal(new Set(['/x/env.txt', ...files])),
     });
     expect(r).toEqual({ path: '/x/env.txt', via: 'env' });
   });
 
   it('an env value naming a missing file fails and does not fall through', () => {
-    const { repoRoot, evidenceFile } = workspace();
+    const { repoRoot, files } = workspace([3, 4]);
     const r = resolveSpecLandedPath({
       env: { SPEC_LANDED: '/x/missing.txt' },
       root: repoRoot,
-      exists: onlyReal(new Set([evidenceFile])),
+      exists: onlyReal(new Set(files)),
     });
     expect(r.path).toBeUndefined();
     expect(r.via).toBe('env');
@@ -235,30 +242,58 @@ describe('SPEC-LANDED.txt lookup order (D5-07)', () => {
   });
 
   it('an empty env value is ignored', () => {
-    const { repoRoot, evidenceFile } = workspace();
+    const { repoRoot, files } = workspace([3]);
     const r = resolveSpecLandedPath({
       env: { SPEC_LANDED: '' },
       root: repoRoot,
-      exists: onlyReal(new Set([evidenceFile])),
+      exists: onlyReal(new Set(files)),
     });
-    expect(r).toEqual({ path: evidenceFile, via: 'evidence' });
+    expect(r).toEqual({ path: files[0], via: 'evidence' });
   });
 
-  it('the workspace evidence copy is used when no env value is given', () => {
-    const { repoRoot, evidenceFile } = workspace();
+  it('the only evidence copy is used when no env value is given', () => {
+    const { repoRoot, files } = workspace([3]);
+    const r = resolveSpecLandedPath({ env: {}, root: repoRoot, exists: onlyReal(new Set(files)) });
+    expect(r).toEqual({ path: files[0], via: 'evidence' });
+  });
+
+  it('the highest-numbered sprint wins, compared as numbers (sprint-10 beats sprint-9 and sprint-4)', () => {
+    const { repoRoot, files } = workspace([3, 4, 9, 10]);
+    const r = resolveSpecLandedPath({ env: {}, root: repoRoot, exists: onlyReal(new Set(files)) });
+    expect(r).toEqual({ path: files[3], via: 'evidence' });
+    expect(r.path).toContain(join('evidence', 'sprint-10'));
+  });
+
+  it('a newer sprint folder without the file is skipped in favour of the highest one that has it', () => {
+    const { repoRoot, files } = workspace([3, 4, 5]);
     const r = resolveSpecLandedPath({
       env: {},
       root: repoRoot,
-      exists: onlyReal(new Set([evidenceFile])),
+      exists: onlyReal(new Set([files[0]!, files[1]!])),
     });
-    expect(r).toEqual({ path: evidenceFile, via: 'evidence' });
+    expect(r).toEqual({ path: files[1], via: 'evidence' });
   });
 
-  it('reports where it looked when neither the env value nor the evidence copy exists', () => {
-    const { repoRoot, evidenceFile } = workspace();
+  it('reports where it looked when neither the env value nor any evidence copy exists', () => {
+    const { repoRoot, files } = workspace([3, 4]);
     const none = resolveSpecLandedPath({ env: {}, root: repoRoot, exists: () => false });
     expect(none.path).toBeUndefined();
-    expect(none.tried).toEqual([evidenceFile]);
+    expect(none.tried).toEqual([files[1], files[0]]);
+    const empty = resolveSpecLandedPath({
+      env: {},
+      root: join(tmpdir(), 'dockit-no-evidence', 'dockit'),
+      exists: () => false,
+    });
+    expect(empty.path).toBeUndefined();
+    expect(empty.tried).toEqual([
+      join(tmpdir(), 'dockit-no-evidence', 'evidence', 'sprint-<n>', 'D1', 'SPEC-LANDED.txt'),
+    ]);
+  });
+
+  it('never reads a scratch path: the script names no scratch directory', () => {
+    const text = readFileSync(join(root, 'scripts', 'sync-contracts.mjs'), 'utf8');
+    expect(text).not.toContain(['', 'private', 'tmp'].join('/'));
+    expect(text).not.toContain('airplanemode-team');
   });
 });
 

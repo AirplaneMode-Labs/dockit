@@ -4,7 +4,7 @@
 // the vendored copies by hand. `--check` reports in-sync or drift per file, writes nothing and
 // exits 1 on drift. Exits 0 and prints a notice when the sibling is absent.
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,19 +12,19 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 export const DEFAULT_SPEC_DIR = join(root, '..', 'runtime', 'spec');
 // D1 writes SPEC-LANDED.txt when the spec release has landed: one `sha256  path` line per spec file.
-// Lookup order (resolveSpecLandedPath): env SPEC_LANDED (a missing file is an error), then
-// <workspace>/evidence/sprint-3/D1/SPEC-LANDED.txt (the committed copy). No scratch path is baked in.
+// Lookup order (resolveSpecLandedPath): env SPEC_LANDED (a missing file is an error), then the highest-numbered
+// <workspace>/evidence/sprint-<n>/D1/SPEC-LANDED.txt that exists (the committed copy). No scratch path is baked in.
 export const DEFAULT_OUT_DIR = join(root, 'src', 'contracts');
 
-// Each contract carries its own version (spec release 0.3.0): the header names that contract's
-// version, not the release's.
+// Each contract carries its own version (spec release 0.4.0, 2026-11-14, untagged): the header names that
+// contract's version, not the release's. Manifest 0.1.1 is "manifest spec v0.1" (published); the rest are draft.
 export const CONTRACT_VERSIONS = {
-  'manifest.ts': '0.1.0',
+  'manifest.ts': '0.1.1',
   'capability-profile.ts': '0.1.0',
-  'event.ts': '0.1.2',
-  'storage-api.ts': '0.1.0',
-  'backend-adapter.ts': '0.3.0',
-  'model-descriptor.ts': '0.2.0',
+  'event.ts': '0.1.3',
+  'storage-api.ts': '0.2.0',
+  'backend-adapter.ts': '0.3.1',
+  'model-descriptor.ts': '0.2.1',
 };
 export const CONTRACT_FILES = Object.keys(CONTRACT_VERSIONS);
 export const header = (file) => {
@@ -50,16 +50,17 @@ export function parseLanded(text) {
 }
 
 /**
- * Where SPEC-LANDED.txt is read from. Order: env SPEC_LANDED, then <workspace>/evidence/sprint-3/D1/
- * SPEC-LANDED.txt. An env value naming a missing file is an error and
- * never falls through to another copy. Returns { path, via } on success, or { path: undefined, via?,
- * tried } listing every place looked at.
- * @param {{ env?: Record<string, string | undefined>, root?: string, exists?: (p: string) => boolean }} [opts]
+ * Where SPEC-LANDED.txt is read from. Order: env SPEC_LANDED, then the highest-numbered
+ * <workspace>/evidence/sprint-<n>/D1/SPEC-LANDED.txt that exists (n compared as a number). An env value naming a
+ * missing file is an error and never falls through to another copy. Returns { path, via } on success, or
+ * { path: undefined, via?, tried } listing every place looked at (highest sprint first).
+ * @param {{ env?: Record<string, string | undefined>, root?: string, exists?: (p: string) => boolean, readdir?: (p: string) => string[] }} [opts]
  */
 export function resolveSpecLandedPath({
   env = process.env,
   root: repoRoot = root,
   exists = existsSync,
+  readdir = (p) => readdirSync(p),
 } = {}) {
   const fromEnv = env.SPEC_LANDED;
   if (fromEnv !== undefined && fromEnv !== '') {
@@ -67,9 +68,27 @@ export function resolveSpecLandedPath({
       ? { path: fromEnv, via: 'env' }
       : { path: undefined, via: 'env', tried: [fromEnv] };
   }
-  const evidence = join(repoRoot, '..', 'evidence', 'sprint-3', 'D1', 'SPEC-LANDED.txt');
-  if (exists(evidence)) return { path: evidence, via: 'evidence' };
-  return { path: undefined, tried: [evidence] };
+  const evidenceDir = join(repoRoot, '..', 'evidence');
+  let sprints = [];
+  try {
+    sprints = readdir(evidenceDir)
+      .map((name) => /^sprint-(\d+)$/u.exec(name))
+      .filter((m) => m !== null)
+      .map((m) => Number(m[1]))
+      .sort((a, b) => b - a);
+  } catch {
+    sprints = [];
+  }
+  if (sprints.length === 0) {
+    return { path: undefined, tried: [join(evidenceDir, 'sprint-<n>', 'D1', 'SPEC-LANDED.txt')] };
+  }
+  const tried = [];
+  for (const n of sprints) {
+    const candidate = join(evidenceDir, `sprint-${n}`, 'D1', 'SPEC-LANDED.txt');
+    tried.push(candidate);
+    if (exists(candidate)) return { path: candidate, via: 'evidence' };
+  }
+  return { path: undefined, tried };
 }
 
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
