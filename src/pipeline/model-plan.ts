@@ -30,41 +30,39 @@ export const MODEL_CARD_TEXT: string = MODEL_LOADED_IN_BROWSER
 export type RungId = 'webgpu' | 'wasm' | 'builtin' | 'refuse';
 
 /**
- * What runtime reported landing in Sprint 3 (D1's LANDED.json, 'green' only). The default is the
- * conservative wording; set a flag to true only when LANDED.json marks it green (test/pipeline.test.ts
- * compares this constant with that file). Display only: dockit imports no engine.
+ * What runtime reported landing (D1's LANDED.json files, 'green' only). The worker landed in Sprint 3 and is
+ * still green in Sprint 4. WebLLM is cut from Sprint 4 (team decision TD-08, 14 Nov 2026): it is not in any
+ * label or chain rung, and appears only as WEBLLM_NOT_YET in the not-yet box. The default is the conservative
+ * wording; set a flag to true only when LANDED.json marks it green (test/pipeline.test.ts compares this constant
+ * with that file). Display only: dockit imports no engine.
  */
-export interface Sprint3Landed {
+export interface RuntimeLanded {
   worker: boolean;
-  webllm: boolean;
 }
 
-export const SPRINT3_LANDED: Sprint3Landed = { worker: true, webllm: false };
+export const RUNTIME_LANDED: RuntimeLanded = { worker: true };
 
-export function chainLabels(l: Sprint3Landed): { webgpu: string; wasm: string } {
+/** The only WebLLM wording in dockit: a not-yet, never a claim. */
+export const WEBLLM_NOT_YET = 'a WebLLM rung (cut from Sprint 4)';
+
+export function chainLabels(l: RuntimeLanded): { webgpu: string; wasm: string } {
   const w = l.worker ? ', engine in a worker' : '';
-  const webgpu = l.webllm
-    ? `WebGPU: WebLLM (MLC build) or Transformers.js q4f16${w}`
-    : `WebGPU: Transformers.js q4f16${w}`;
-  return { webgpu, wasm: `WebAssembly: Transformers.js q8${w}` };
+  return {
+    webgpu: `WebGPU: Transformers.js q4f16${w}`,
+    wasm: `WebAssembly: Transformers.js q8${w}`,
+  };
 }
 
-export function chainSentence(l: Sprint3Landed): string {
-  const does = [
-    ...(l.worker ? ['runs the engine in a worker'] : []),
-    ...(l.webllm ? ['adds a WebLLM rung'] : []),
-  ].join(' and ');
-  const head = does ? `runtime 0.2.0-alpha.0 ${does}` : 'runtime 0.2.0-alpha.0';
-  const tail = ', tested with small test models only; dockit loads nothing until Sprint 5.';
-  const decided = l.webllm
-    ? ' Whether WebLLM serves the planned model is decided in Sprint 5.'
-    : '';
-  return `${head}${tail}${decided}`;
+export function chainSentence(l: RuntimeLanded): string {
+  const head = l.worker
+    ? 'runtime 0.2.0-alpha.1 runs the engine in a worker'
+    : 'runtime 0.2.0-alpha.1';
+  return `${head}, tested with small test models only; dockit loads nothing until Sprint 5.`;
 }
 
-const LABELS = chainLabels(SPRINT3_LANDED);
+const LABELS = chainLabels(RUNTIME_LANDED);
 
-export const CHAIN_SENTENCE: string = chainSentence(SPRINT3_LANDED);
+export const CHAIN_SENTENCE: string = chainSentence(RUNTIME_LANDED);
 
 export const CHAIN: readonly { id: RungId; label: string }[] = [
   { id: 'webgpu', label: LABELS.webgpu },

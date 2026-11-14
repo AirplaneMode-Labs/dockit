@@ -2,9 +2,14 @@ import {
   STORAGE_KEY_MAX,
   STORAGE_NS_PATTERN,
   StorageError,
+  type PutVectorsResult,
   type QueryHit,
+  type QueryOptions,
   type StorableValue,
   type StorageApi,
+  type UsageResult,
+  type VectorIndexInfo,
+  type VectorRow,
 } from '../contracts/storage-api.ts';
 
 interface Row {
@@ -79,8 +84,11 @@ function checkKey(key: string): void {
 }
 
 /**
- * In-process StorageApi used by the dockit pipeline stubs. Nothing persists beyond the page.
- * The real drivers (OPFS, IndexedDB) live in @airplanemode/localdata.
+ * In-process StorageApi used by the dockit pipeline stubs. Nothing persists beyond the page. The real drivers
+ * (OPFS, IndexedDB) and the vector index live in @airplanemode/localdata. This class covers the key-value half
+ * of the Storage API 0.2 interface only: dockit wires no index in this build (Sprint 5), so query() and
+ * putVectors() reject 'not_implemented' naming Sprint 5, and indexInfo() resolves undefined (there is no index).
+ * The errors never carry a key, a vector component or a value.
  */
 export class MemoryStore implements StorageApi {
   readonly driver = 'memory' as const;
@@ -139,16 +147,32 @@ export class MemoryStore implements StorageApi {
     ns: string,
     _vector: Float32Array,
     _k: number,
-    _opts?: { filterPrefix?: string },
+    _opts?: QueryOptions,
   ): Promise<QueryHit[]> {
     this.#ns(ns);
     throw new StorageError(
       'not_implemented',
-      'query() is not implemented in Storage API 0.1; the vector index arrives in Sprint 4',
+      "dockit's in-memory store has no vector index; localdata's index is wired into dockit in Sprint 5",
     );
   }
 
-  async usage(ns?: string): Promise<{ bytes: number; quotaBytes?: number; items: number }> {
+  async putVectors(
+    ns: string,
+    _rows: Iterable<VectorRow> | AsyncIterable<VectorRow>,
+  ): Promise<PutVectorsResult> {
+    this.#ns(ns);
+    throw new StorageError(
+      'not_implemented',
+      "dockit's in-memory store has no vector index; localdata's index is wired into dockit in Sprint 5",
+    );
+  }
+
+  async indexInfo(ns: string): Promise<VectorIndexInfo | undefined> {
+    this.#ns(ns);
+    return undefined;
+  }
+
+  async usage(ns?: string): Promise<UsageResult> {
     if (this.#closed) throw new StorageError('closed', 'store is closed');
     let bytes = 0;
     let items = 0;

@@ -90,7 +90,7 @@ describe('stage stubs', () => {
   });
 });
 
-describe('memory store (StorageApi 0.1)', () => {
+describe('memory store (StorageApi 0.2 interface, KV only)', () => {
   it('round-trips values and deletes', async () => {
     const s = new MemoryStore();
     await s.set('ns', 'k', { a: 1 });
@@ -99,12 +99,21 @@ describe('memory store (StorageApi 0.1)', () => {
     expect(await s.get('ns', 'k')).toBeUndefined();
   });
 
-  it('query throws not_implemented naming Sprint 4', async () => {
+  it('query and putVectors throw not_implemented naming Sprint 5; indexInfo says there is no index (no index wiring in this build)', async () => {
     const s = new MemoryStore();
-    const err = await s.query('ns', new Float32Array(4), 3).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(StorageError);
-    expect((err as StorageError).code).toBe('not_implemented');
-    expect((err as StorageError).message).toMatch(/Sprint 4/);
+    const q = await s.query('ns', new Float32Array(4), 3).catch((e: unknown) => e);
+    expect(q).toBeInstanceOf(StorageError);
+    expect((q as StorageError).code).toBe('not_implemented');
+    expect((q as StorageError).message).toMatch(/Sprint 5/);
+    const p = await s
+      .putVectors('ns', [{ key: 'a', vector: new Float32Array(4) }])
+      .catch((e: unknown) => e);
+    expect(p).toBeInstanceOf(StorageError);
+    expect((p as StorageError).code).toBe('not_implemented');
+    expect((p as StorageError).message).toMatch(/Sprint 5/);
+    expect(await s.indexInfo('ns')).toBeUndefined();
+    // Errors never carry a key, a vector component or a value.
+    expect(JSON.stringify([q, p])).not.toMatch(/"a"/);
   });
 
   it('rejects bad namespaces and keys', async () => {
@@ -364,8 +373,9 @@ describe('MockAdapter against Backend adapter 0.2.0 (D5-01)', () => {
   });
 });
 
-describe('Sprint 3 chain labels, worded by LANDED.json (D5-03)', () => {
-  const NONE = { worker: false, webllm: false } as const;
+describe('runtime chain labels, worded by LANDED.json (D5-01, Sprint 4)', () => {
+  const NONE = { worker: false } as const;
+  const WORKER = { worker: true } as const;
 
   it('default (nothing landed) is the conservative wording', async () => {
     const plan = await import('../src/pipeline/model-plan.ts');
@@ -374,39 +384,46 @@ describe('Sprint 3 chain labels, worded by LANDED.json (D5-03)', () => {
       wasm: 'WebAssembly: Transformers.js q8',
     });
     expect(plan.chainSentence(NONE)).toBe(
-      'runtime 0.2.0-alpha.0, tested with small test models only; dockit loads nothing until Sprint 5.',
+      'runtime 0.2.0-alpha.1, tested with small test models only; dockit loads nothing until Sprint 5.',
     );
   });
 
-  it('worker only', async () => {
+  it('worker landed: the sentence says runtime 0.2.0-alpha.1 runs the engine in a worker', async () => {
     const plan = await import('../src/pipeline/model-plan.ts');
-    const l = { worker: true, webllm: false };
-    expect(plan.chainLabels(l)).toEqual({
+    expect(plan.chainLabels(WORKER)).toEqual({
       webgpu: 'WebGPU: Transformers.js q4f16, engine in a worker',
       wasm: 'WebAssembly: Transformers.js q8, engine in a worker',
     });
-    expect(plan.chainSentence(l)).toBe(
-      'runtime 0.2.0-alpha.0 runs the engine in a worker, tested with small test models only; dockit loads nothing until Sprint 5.',
+    expect(plan.chainSentence(WORKER)).toBe(
+      'runtime 0.2.0-alpha.1 runs the engine in a worker, tested with small test models only; dockit loads nothing until Sprint 5.',
     );
   });
 
-  it('worker and WebLLM', async () => {
+  it('no label, sentence or chain rung can name WebLLM: the rung is cut from Sprint 4 (TD-08)', async () => {
     const plan = await import('../src/pipeline/model-plan.ts');
-    const l = { worker: true, webllm: true };
-    expect(plan.chainLabels(l).webgpu).toBe(
-      'WebGPU: WebLLM (MLC build) or Transformers.js q4f16, engine in a worker',
+    for (const l of [NONE, WORKER]) {
+      expect(JSON.stringify([plan.chainLabels(l), plan.chainSentence(l)])).not.toMatch(
+        /WebLLM|MLC/,
+      );
+    }
+    expect(JSON.stringify([plan.CHAIN, plan.CHAIN_SENTENCE, plan.MODEL_CARD_TEXT])).not.toContain(
+      'WebLLM',
     );
-    expect(plan.chainSentence(l)).toBe(
-      'runtime 0.2.0-alpha.0 runs the engine in a worker and adds a WebLLM rung, tested with small test models only; dockit loads nothing until Sprint 5. Whether WebLLM serves the planned model is decided in Sprint 5.',
-    );
+    // The one allowed mention is the not-yet wording, used by the not-yet box.
+    expect(plan.WEBLLM_NOT_YET).toBe('a WebLLM rung (cut from Sprint 4)');
   });
 
-  it('WebLLM without the worker names no worker', async () => {
-    const plan = await import('../src/pipeline/model-plan.ts');
-    const l = { worker: false, webllm: true };
-    expect(plan.chainLabels(l).webgpu).toBe('WebGPU: WebLLM (MLC build) or Transformers.js q4f16');
-    expect(plan.chainLabels(l).wasm).toBe('WebAssembly: Transformers.js q8');
-    expect(plan.chainSentence(l)).not.toContain('worker');
+  it('the not-yet box wording comes from the exported constant, and App.tsx carries no other WebLLM text', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const app = readFileSync(join(import.meta.dirname, '..', 'src', 'App.tsx'), 'utf8');
+    expect(app).toContain('WEBLLM_NOT_YET');
+    expect(app).not.toMatch(/carried to Sprint 4/);
+    for (const line of app.split('\n').filter((l) => /WebLLM/.test(l))) {
+      expect(line, 'a WebLLM mention in App.tsx must be the not-yet wording').toMatch(
+        /cut from Sprint 4|WEBLLM_NOT_YET|WebLLM rung yet/,
+      );
+    }
   });
 
   it('keeps the built-in and refuse rungs unchanged', async () => {
@@ -419,49 +436,65 @@ describe('Sprint 3 chain labels, worded by LANDED.json (D5-03)', () => {
     );
   });
 
-  it('the shipped constant equals the final LANDED.json state when that file is reachable', async () => {
+  it('the shipped constant equals the LANDED.json state when that file is reachable', async () => {
     const plan = await import('../src/pipeline/model-plan.ts');
-    const { existsSync, readFileSync } = await import('node:fs');
+    const { existsSync, readdirSync, readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
-    // Lookup order mirrors scripts/sync-contracts.mjs: env LANDED_JSON (a missing file is an error),
-    // then the committed evidence copy. With neither, the cross-check is skipped.
+    // Lookup: env LANDED_JSON (a missing file is an error), else every <workspace>/evidence/sprint-<n>/D1/LANDED.json
+    // merged in ascending sprint order (a later sprint's entry replaces an earlier one; Sprint 4's file does not
+    // repeat the worker, which landed in Sprint 3). With neither, the cross-check is skipped, never guessed.
     const root = join(import.meta.dirname, '..');
     const fromEnv = process.env.LANDED_JSON ?? '';
     if (fromEnv !== '' && !existsSync(fromEnv)) {
       throw new Error(`LANDED_JSON names a file that does not exist: ${fromEnv}`);
     }
-    const evidence = join(root, '..', 'evidence', 'sprint-3', 'D1', 'LANDED.json');
-    const path = fromEnv !== '' ? fromEnv : existsSync(evidence) ? evidence : undefined;
-    if (path !== undefined) {
-      const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    let landed: Record<string, unknown> | undefined;
+    if (fromEnv !== '') {
+      landed = JSON.parse(readFileSync(fromEnv, 'utf8')) as Record<string, unknown>;
+    } else {
+      const evidence = join(root, '..', 'evidence');
+      const sprints = existsSync(evidence)
+        ? readdirSync(evidence)
+            .map((n) => /^sprint-(\d+)$/u.exec(n))
+            .filter((m): m is RegExpExecArray => m !== null)
+            .map((m) => Number(m[1]))
+            .sort((x, y) => x - y)
+        : [];
+      for (const n of sprints) {
+        const f = join(evidence, `sprint-${n}`, 'D1', 'LANDED.json');
+        if (existsSync(f)) {
+          landed = {
+            ...(landed ?? {}),
+            ...(JSON.parse(readFileSync(f, 'utf8')) as Record<string, unknown>),
+          };
+        }
+      }
+    }
+    if (landed !== undefined) {
       const green = (k: string): boolean => {
-        const v = raw[k];
+        const v = landed![k];
         if (typeof v === 'string') return v.startsWith('green');
         return typeof v === 'object' && v !== null && (v as { status?: string }).status === 'green';
       };
-      expect(plan.SPRINT3_LANDED).toEqual({ worker: green('worker'), webllm: green('webllm') });
+      expect(plan.RUNTIME_LANDED).toEqual({ worker: green('worker') });
+      // WebLLM is never green: 'not landed' in Sprint 3, 'cut' in Sprint 4.
+      expect(green('webllm')).toBe(false);
     }
-    // Sprint 3 final state per runtime's LANDED.json: the worker engine is green, WebLLM is not.
-    expect(plan.SPRINT3_LANDED).toEqual({ worker: true, webllm: false });
+    expect(plan.RUNTIME_LANDED).toEqual({ worker: true });
     expect(plan.CHAIN.find((r) => r.id === 'webgpu')?.label).toBe(
-      plan.chainLabels(plan.SPRINT3_LANDED).webgpu,
+      plan.chainLabels(plan.RUNTIME_LANDED).webgpu,
     );
-    expect(plan.CHAIN_SENTENCE).toBe(plan.chainSentence(plan.SPRINT3_LANDED));
-    if (!plan.SPRINT3_LANDED.webllm) {
-      expect(JSON.stringify([plan.CHAIN, plan.CHAIN_SENTENCE])).not.toContain('WebLLM');
-    }
+    expect(plan.CHAIN_SENTENCE).toBe(plan.chainSentence(plan.RUNTIME_LANDED));
   });
 
-  it('with the worker landed and WebLLM not, the card says the engine runs in a worker and claims no dockit inference', async () => {
+  it('the card says the engine runs in a worker and claims no dockit inference and no WebLLM', async () => {
     const plan = await import('../src/pipeline/model-plan.ts');
     expect(plan.CHAIN_SENTENCE).toBe(
-      'runtime 0.2.0-alpha.0 runs the engine in a worker, tested with small test models only; dockit loads nothing until Sprint 5.',
+      'runtime 0.2.0-alpha.1 runs the engine in a worker, tested with small test models only; dockit loads nothing until Sprint 5.',
     );
     expect(plan.CHAIN.find((r) => r.id === 'wasm')?.label).toBe(
       'WebAssembly: Transformers.js q8, engine in a worker',
     );
-    // Any WebLLM mention must be the 'not yet' kind.
-    const text = JSON.stringify([plan.CHAIN, plan.CHAIN_SENTENCE]);
-    expect(text).not.toMatch(/WebLLM/);
+    expect(JSON.stringify([plan.CHAIN, plan.CHAIN_SENTENCE])).not.toMatch(/WebLLM/);
   });
 });
