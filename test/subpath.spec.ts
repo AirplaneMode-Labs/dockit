@@ -231,14 +231,14 @@ test.describe('dockit under the /dockit/ sub-path', () => {
       expect(shell).not.toBeNull();
       expect(shell!.status()).toBe(200);
       expect(shell!.fromServiceWorker()).toBe(true);
-      await expect(page.getByTestId('placeholder-banner')).toBeVisible();
+      await expect(page.getByTestId('not-yet')).toBeVisible();
       await expect(page.getByTestId('online-badge')).toHaveText('offline');
     } finally {
       await context.setOffline(false);
     }
   });
 
-  test('home screen states that document processing is not built and lists six stub stages', async ({
+  test('home screen shows the real flow cards and the not-yet box, with no request outside /dockit/ and no model request before the download button', async ({
     page,
   }) => {
     const consoleErrors: string[] = [];
@@ -249,43 +249,28 @@ test.describe('dockit under the /dockit/ sub-path', () => {
     page.on('pageerror', (e) => consoleErrors.push(String(e)));
     page.on('request', (r) => requests.push(r.url()));
     await page.goto('./');
-    const banner = page.getByTestId('placeholder-banner');
-    await expect(banner).toBeVisible();
-    expect(
-      (await banner.textContent())!.trim().startsWith('Document processing is not built yet.'),
-    ).toBe(true);
-    const rows = page.locator('[data-testid="pipeline"] tbody tr');
-    await expect(rows).toHaveCount(6);
-    for (let i = 0; i < 6; i++) {
-      const status = (await rows.nth(i).locator('td').nth(1).textContent()) ?? '';
-      expect(status.startsWith('not built'), status).toBe(true);
-    }
+    await expect(page.getByTestId('model-card')).toBeVisible();
+    await expect(page.getByTestId('capability-card')).toBeVisible();
+    await expect(page.getByTestId('document-card')).toBeVisible();
+    await expect(page.getByTestId('ask-card')).toBeVisible();
     await expect(page.locator('#not-yet h2')).toHaveText('What this demo does not do yet');
     await expect(page.locator('#requirements h2')).toHaveText('Browser requirements');
-    await expect(page.getByTestId('shared-origin')).toHaveText(
-      'All Airplane Mode Labs demos share one browser origin (airplanemode-labs.github.io): storage, quota, estimate() and persist() are shared between them. This demo writes only under the dockit-precache-* cache.',
-    );
+    await expect(page.getByTestId('not-yet')).toContainText('OCR is not yet supported');
+    await expect(page.getByTestId('not-yet')).toContainText('not the pilot model');
     for (const id of ['service-worker', 'cache-api', 'install-prompt', 'secure-context']) {
       await expect(page.getByTestId(`req-${id}`)).toHaveAttribute('data-ok', 'true');
     }
-    // D5-03: planned model card; a prediction only, no inference, no extra requests.
-    await expect(page.getByTestId('model-card')).toContainText(
-      'Planned production model: Qwen3-1.7B (Apache-2.0)',
-    );
-    await expect(page.getByTestId('plan-source')).toContainText(
-      'onnx-community/Qwen3-1.7B-ONNX@3231b522c6e7',
-    );
-    await expect(page.getByTestId('chain').locator('li')).toHaveCount(4);
-    await expect(page.getByTestId('prediction-label')).toHaveText(
-      'prediction; nothing is downloaded or loaded; inference arrives in Sprint 5',
-    );
-    await expect(page.getByTestId('pred-wasm')).toHaveText('likely available');
     expect(consoleErrors).toEqual([]);
     expect(
       requests.filter((u) => !u.startsWith(PREFIX)),
       requests.join('\n'),
     ).toEqual([]);
-    expect(requests.some((u) => /\.(onnx|safetensors)|huggingface/u.test(u))).toBe(false);
+    // the manifest is read to say how big the download is; no model file is requested before the button is pressed
+    expect(
+      requests.some((u) =>
+        /\.(onnx|safetensors)|huggingface|\/models\/(?!manifest\.json)/u.test(u),
+      ),
+    ).toBe(false);
   });
 
   test('requirements are computed by feature detection, not a static list', async ({ browser }) => {

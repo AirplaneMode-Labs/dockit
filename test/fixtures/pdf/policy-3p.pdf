@@ -1,0 +1,76 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R] /Count 3 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<<  /Length 412 >>
+stream
+BT /F1 15 Tf 72 730 Td (Sample Policy 3P, section 1: cover) Tj ET
+BT /F1 11 Tf 72 690 Td 17 TL
+(This is a synthetic test document. Every name and figure in it is invented.) Tj
+T* (This sample policy covers one sample sedan owned by the policy holder.) Tj
+T* (The annual premium for the sample policy is 12,500 rupees, paid once a year.) Tj
+T* (The sample policy starts on the day the premium is received.) Tj
+ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<<  /Length 395 >>
+stream
+BT /F1 15 Tf 72 730 Td (Sample Policy 3P, section 2: grace period and claims) Tj ET
+BT /F1 11 Tf 72 690 Td 17 TL
+(The grace period for the sample policy is 45 days.) Tj
+T* (A claim must be filed within 30 days of the event.) Tj
+T* (The insurer replies to a claim within 15 days of receiving all papers.) Tj
+T* (A late premium is accepted during the grace period without a new inspection.) Tj
+ET
+
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<<  /Length 421 >>
+stream
+BT /F1 15 Tf 72 730 Td (Sample Policy 3P, section 3: cancellation) Tj ET
+BT /F1 11 Tf 72 690 Td 17 TL
+(The sample policy can be cancelled by the policy holder in writing.) Tj
+T* (A refund of the unused premium is paid within 14 days of cancellation.) Tj
+T* (No refund is paid when a claim was made during the policy year.) Tj
+T* (The insurer may cancel only for a premium that stays unpaid after the grace period.) Tj
+ET
+
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 8 0 R >>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000133 00000 n 
+0000000230 00000 n 
+0000000694 00000 n 
+0000000820 00000 n 
+0000001267 00000 n 
+0000001393 00000 n 
+0000001866 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R /ID [<00112233445566778899aabbccddeeff> <ffeeddccbbaa99887766554433221100>] >>
+startxref
+1992
+%%EOF

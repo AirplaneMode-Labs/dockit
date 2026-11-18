@@ -5,7 +5,8 @@ export const BASE_URL = `http://127.0.0.1:${PORT}/`;
 
 export default defineConfig({
   testDir: 'test',
-  testMatch: /.*\.spec\.ts$/,
+  // the PWA and sub-path specs; the end-to-end and gate specs have their own config (playwright.e2e.config.ts)
+  testMatch: /(pwa|subpath)\.spec\.ts$/,
   fullyParallel: false,
   workers: 1,
   retries: 0,

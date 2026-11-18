@@ -85,7 +85,7 @@ test.describe('dockit installable PWA', () => {
     );
   });
 
-  test('CSP meta: no remote origin, no unsafe-inline, no unsafe-eval, no blob: in worker-src', () => {
+  test('CSP meta: no remote origin, no unsafe-inline, no unsafe-eval, blob: only in worker-src', () => {
     const { csp } = readBuilt();
     expect(csp).not.toMatch(/https?:\/\//u);
     expect(csp).not.toContain("'unsafe-inline'");
@@ -100,9 +100,9 @@ test.describe('dockit installable PWA', () => {
           return [name!, values] as const;
         }),
     );
-    expect(directives.get('worker-src')).toEqual(["'self'"]);
+    expect(directives.get('worker-src')).toEqual(["'self'", 'blob:']);
     expect(directives.get('frame-src')).toEqual(["'none'"]);
-    expect(directives.get('media-src')).toEqual(["'self'"]);
+    expect(directives.get('media-src')).toEqual(["'none'"]);
     expect(directives.get('object-src')).toEqual(["'none'"]);
     expect(directives.get('base-uri')).toEqual(["'none'"]);
     expect(directives.get('script-src')).toEqual(["'self'", "'wasm-unsafe-eval'"]);
@@ -135,7 +135,7 @@ test.describe('dockit installable PWA', () => {
     const icons = manifest['icons'] as { sizes: string; type: string; purpose: string }[];
     expect(icons.map((i) => i.sizes)).toEqual(expect.arrayContaining(['192x192', '512x512']));
     expect(icons.some((i) => i.purpose === 'maskable')).toBe(true);
-    await expect(page.getByTestId('placeholder-banner')).toBeVisible();
+    await expect(page.getByTestId('not-yet')).toBeVisible();
     await expect(page.getByTestId('online-badge')).toHaveText('online');
   });
 
@@ -149,10 +149,8 @@ test.describe('dockit installable PWA', () => {
     expect(response).not.toBeNull();
     expect(response!.status()).toBe(200);
     expect(response!.fromServiceWorker()).toBe(true);
-    await expect(page.getByTestId('placeholder-banner')).toBeVisible();
+    await expect(page.getByTestId('not-yet')).toBeVisible();
     await expect(page.getByTestId('online-badge')).toHaveText('offline');
-    await page.getByTestId('run').click();
-    await expect(page.getByTestId('answer')).toContainText('placeholder:');
     await context.setOffline(false);
   });
 
@@ -223,8 +221,6 @@ test.describe('dockit installable PWA', () => {
     record(page);
     context.on('page', record);
     await loadControlled(page);
-    await page.getByTestId('run').click();
-    await expect(page.getByTestId('answer')).toContainText('placeholder:');
     await page.reload();
     expect(urls.size).toBeGreaterThan(0);
     for (const u of urls) expect(u.startsWith(BASE_URL), u).toBe(true);
@@ -336,29 +332,21 @@ test.describe('Trusted Types (D5-02)', () => {
       });
     });
     await loadControlled(page);
-    await page.getByTestId('run').click();
-    await expect(page.getByTestId('answer')).toContainText('placeholder:');
     const { csp } = readBuilt();
-    expect(csp).toContain("require-trusted-types-for 'script'; trusted-types dockit-sw");
+    expect(csp).toContain(
+      "require-trusted-types-for 'script'; trusted-types dockit-sw airplanemode-worker dockit-workers",
+    );
     expect(csp).not.toContain('allow-duplicates');
     // The service worker registered through the policy and controls the page.
     expect(await page.evaluate(() => navigator.serviceWorker.controller?.state)).toBe('activated');
-    // The chain card is a plan only: it says runtime 0.2.0-alpha.1 runs the engine in a worker (LANDED.json
-    // worker green), makes no WebLLM claim (the rung is cut from Sprint 4) and claims nothing loaded in dockit.
-    await expect(page.getByTestId('chain-sentence')).toContainText('runtime 0.2.0-alpha.1');
-    await expect(page.getByTestId('chain-sentence')).toContainText('runs the engine in a worker');
-    await expect(page.getByTestId('chain-sentence')).toContainText('dockit loads nothing');
-    await expect(page.getByTestId('model-plan')).not.toContainText('WebLLM');
-    // WebLLM appears only as 'not yet (cut from Sprint 4)', in the not-yet box.
-    await expect(page.getByTestId('chain-not-yet')).toContainText(
-      'a WebLLM rung (cut from Sprint 4)',
-    );
-    await expect(page.getByTestId('chain-not-yet')).not.toContainText('carried to Sprint 4');
+    // The not-yet box names what the page does not do, and WebLLM only as cut.
+    await expect(page.getByTestId('not-yet')).toContainText('WebLLM (cut)');
+    await expect(page.getByTestId('not-yet')).toContainText('OCR is not yet supported');
     await expect(page.getByTestId('tt-status')).toContainText('Trusted Types is on for scripts');
     // The offline reload still works.
     await context.setOffline(true);
     await page.reload();
-    await expect(page.getByTestId('run')).toBeVisible();
+    await expect(page.getByTestId('not-yet')).toBeVisible();
     await context.setOffline(false);
     violations.push(...(await page.evaluate(() => (window as unknown as { __v: string[] }).__v)));
     expect(violations).toEqual([]);

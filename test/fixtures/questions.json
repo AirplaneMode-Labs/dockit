@@ -1,0 +1,57 @@
+{
+  "document": "policy-3p.pdf",
+  "note": "Seven fixed questions over test/fixtures/pdf/policy-3p.pdf. q1 is the gate (the answer must contain '45' and the sources must show page 2). The others are recorded, not gated; the result is reported as 'N of M correct with the correct source page', over every run, with no run selected. expectContains is checked case-insensitively against the answer; expectPage is a page the cited or retrieved source must name. q7 has no answer in the document: the model must reply with the refusal phrase.",
+  "refusalPhrase": "I could not find this in the document.",
+  "questions": [
+    {
+      "id": "q1",
+      "gate": true,
+      "question": "What is the grace period?",
+      "expectContains": "45",
+      "expectPage": 2
+    },
+    {
+      "id": "q2",
+      "gate": false,
+      "question": "Within how many days must a claim be filed?",
+      "expectContains": "30",
+      "expectPage": 2
+    },
+    {
+      "id": "q3",
+      "gate": false,
+      "question": "What is the annual premium?",
+      "expectContains": "12,500",
+      "expectPage": 1
+    },
+    {
+      "id": "q4",
+      "gate": false,
+      "question": "What kind of vehicle does the sample policy cover?",
+      "expectContains": "sedan",
+      "expectPage": 1
+    },
+    {
+      "id": "q5",
+      "gate": false,
+      "question": "How can the policy holder cancel the policy?",
+      "expectContains": "writing",
+      "expectPage": 3
+    },
+    {
+      "id": "q6",
+      "gate": false,
+      "question": "Within how many days is the refund paid after cancellation?",
+      "expectContains": "14",
+      "expectPage": 3
+    },
+    {
+      "id": "q7",
+      "gate": false,
+      "question": "What is the colour of the insured vehicle?",
+      "expectContains": null,
+      "expectPage": null,
+      "expectRefusal": true
+    }
+  ]
+}

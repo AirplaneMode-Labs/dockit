@@ -102,20 +102,71 @@ describe('pass-through rules (the worker must not call respondWith)', () => {
   });
 });
 
+describe('pass-through rules added for the model store and non-http schemes (D5-07)', () => {
+  it('passes through /models/ under the scope: model files are never cached or answered by the service worker', () => {
+    expect(
+      decideRoute(req({ url: `${ORIGIN}/models/qwen3-0.6b/onnx/model_quantized.onnx` }), ctx()),
+    ).toEqual({ action: 'pass-through', reason: 'models-path' });
+    // the signed model list is a manifest.json first: the older rule still names it
+    expect(decideRoute(req({ url: `${ORIGIN}/models/manifest.json` }), ctx())).toEqual({
+      action: 'pass-through',
+      reason: 'manifest-json',
+    });
+  });
+
+  it('under a non-root scope, <scope>models/ is the model folder and /models/ elsewhere is not', () => {
+    const deep = ctx({ scopePath: '/dockit/' });
+    expect(decideRoute(req({ url: `${ORIGIN}/dockit/models/x.onnx` }), deep)).toEqual({
+      action: 'pass-through',
+      reason: 'models-path',
+    });
+    expect(decideRoute(req({ url: `${ORIGIN}/other/models/x.onnx` }), deep)).toEqual({
+      action: 'pass-through',
+      reason: 'not-precached',
+    });
+  });
+
+  it('a path that merely contains models/ deeper in the tree is not the model folder', () => {
+    expect(decideRoute(req({ url: `${ORIGIN}/app/models/x.js` }), ctx())).toEqual({
+      action: 'pass-through',
+      reason: 'not-precached',
+    });
+  });
+
+  it.each([
+    `blob:${ORIGIN}/6f1f5b0e-0000-4000-8000-000000000000`,
+    'data:application/pdf;base64,AAAA',
+    'file:///tmp/x.pdf',
+    `filesystem:${ORIGIN}/temporary/x`,
+  ])(
+    'passes through %s without a respondWith: document bytes never reach the service worker',
+    (url) => {
+      expect(decideRoute(req({ url }), ctx())).toEqual({
+        action: 'pass-through',
+        reason: 'non-http',
+      });
+    },
+  );
+
+  it('checks the scheme before the origin, so a blob: URL that names the page origin is still not handled, even as a navigation', () => {
+    expect(decideRoute(req({ url: `blob:${ORIGIN}/abc`, mode: 'navigate' }), ctx())).toEqual({
+      action: 'pass-through',
+      reason: 'non-http',
+    });
+  });
+});
+
 describe('cache decisions', () => {
   it('serves precached files cache-first with a normalised key', () => {
     const route = decideRoute(req({ url: `${ORIGIN}/app/index-abc123.js?v=1#frag` }), ctx());
     expect(route).toEqual({ action: 'cache-first', key: `${ORIGIN}/app/index-abc123.js` });
   });
 
-  it('serves the shell navigation network-first with the shell as fallback', () => {
+  it('serves the shell navigation cache-first from the verified precache, so an offline start makes no request at all', () => {
     for (const url of [`${ORIGIN}/`, `${ORIGIN}/index.html`, `${ORIGIN}/?source=pwa`]) {
-      const route = decideRoute(req({ url, mode: 'navigate' }), ctx());
-      expect(route).toEqual({
-        action: 'network-first',
-        fallback: 'shell',
-        shell: `${ORIGIN}/index.html`,
-        offline: `${ORIGIN}/offline.html`,
+      expect(decideRoute(req({ url, mode: 'navigate' }), ctx())).toEqual({
+        action: 'cache-first',
+        key: `${ORIGIN}/index.html`,
       });
     }
   });
@@ -130,23 +181,15 @@ describe('cache decisions', () => {
     });
   });
 
-  it('serves a navigation to a precached non-shell file (the notices) from its own cache entry when offline', () => {
+  it('serves a navigation to a precached non-shell file (the notices) from its own cache entry', () => {
     const entries = resolvePrecache(
       [...PRECACHE, { url: './THIRD-PARTY-NOTICES.txt', sha256: 'f'.repeat(64) }],
       SCOPE,
     );
     const c = ctx({ precached: new Set(entries.map((e) => e.key)) });
-    const route = decideRoute(
-      req({ url: `${ORIGIN}/THIRD-PARTY-NOTICES.txt`, mode: 'navigate' }),
-      c,
-    );
-    expect(route).toEqual({
-      action: 'network-first',
-      fallback: 'cached',
-      cached: `${ORIGIN}/THIRD-PARTY-NOTICES.txt`,
-      shell: `${ORIGIN}/index.html`,
-      offline: `${ORIGIN}/offline.html`,
-    });
+    expect(
+      decideRoute(req({ url: `${ORIGIN}/THIRD-PARTY-NOTICES.txt`, mode: 'navigate' }), c),
+    ).toEqual({ action: 'cache-first', key: `${ORIGIN}/THIRD-PARTY-NOTICES.txt` });
   });
 
   it('resolves the shell under a non-root scope', () => {
@@ -154,7 +197,7 @@ describe('cache decisions', () => {
     const entries = resolvePrecache(PRECACHE, scope);
     const c = ctx({ scopePath: '/dockit/', precached: new Set(entries.map((e) => e.key)) });
     const route = decideRoute(req({ url: `${ORIGIN}/dockit/`, mode: 'navigate' }), c);
-    expect(route).toMatchObject({ fallback: 'shell', shell: `${ORIGIN}/dockit/index.html` });
+    expect(route).toEqual({ action: 'cache-first', key: `${ORIGIN}/dockit/index.html` });
   });
 
   describe('offline.css requested from a deep path under the scope', () => {

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SW_POLICY_NAME, swScriptUrl, type TrustedTypesLike } from '../src/trusted-types.ts';
 
@@ -73,5 +75,20 @@ describe('dockit-sw Trusted Types policy (D5-02)', () => {
     swScriptUrl(f.tt, BASE);
     expect(() => swScriptUrl(f.tt, BASE)).not.toThrow();
     expect(f.created).toEqual(['dockit-sw']);
+  });
+});
+
+describe('src/trusted-types.ts header (S1-112 b)', () => {
+  const header = readFileSync(
+    join(import.meta.dirname, '..', 'src', 'trusted-types.ts'),
+    'utf8',
+  ).split('*/')[0]!;
+
+  it('names all three policies the CSP allows and does not claim that there is exactly one', () => {
+    for (const name of ['dockit-sw', 'airplanemode-worker', 'dockit-workers'])
+      expect(header, name).toContain(name);
+    expect(header).not.toMatch(/exactly\s+one\s+named\s+policy/u);
+    expect(header).toMatch(/three/iu);
+    expect(header).toMatch(/default policy/iu);
   });
 });

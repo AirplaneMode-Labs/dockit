@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
@@ -32,10 +32,13 @@ describe('dockit #sprint-status element (T1-S4-R1-05)', () => {
     }
   });
 
-  it('equals the dockit line in site/data/demos.json when the site repo is beside this one', () => {
-    const p = new URL('../../site/data/demos.json', import.meta.url);
-    if (!existsSync(p)) return;
-    const demos = JSON.parse(readFileSync(p, 'utf8')) as { repo: string; status: string }[];
-    expect(demos.find((d) => d.repo === 'dockit')?.status).toBe(SPRINT_STATUS_LINE);
+  it('is a Sprint 5 line: Working and Not yet, the done-when facts, 8 GB not measured, and no claim that Sprint 5 is met', () => {
+    expect(SPRINT_STATUS_LINE).toMatch(/^Sprint 5 \(18 Nov 2026\): Working: .* Not yet: .*\.$/);
+    expect(SPRINT_STATUS_LINE).toContain('not measured on 8 GB');
+    expect(SPRINT_STATUS_LINE).toContain('OCR');
+    expect(SPRINT_STATUS_LINE).toContain('WebLLM (cut)');
+    expect(SPRINT_STATUS_LINE).toContain('the live page changes only after the owner pushes');
+    expect(SPRINT_STATUS_LINE).not.toMatch(/\bmet\b/);
+    expect(SPRINT_STATUS_LINE).not.toMatch(/compliance|cheaper|cost/i);
   });
 });
