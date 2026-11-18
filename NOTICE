@@ -22,10 +22,10 @@ Models (not in this repository: built into the page's models/ folder by scripts/
 
 Sibling builds assembled into the deployed page (each a separate Airplane Mode Labs repository, built from the commit named here and
 recorded with a hash per file in vendor/PROVENANCE.json, which is never committed):
-  runtime    3bf53c6f801c2da928dcae69e087221fb757ecd4 - Apache-2.0
-  localdata  39d59a01aa49d4e66a38b0828c0d8b2d622ee76d - Apache-2.0
-  pagetriage b290cc84c08d9874d5d6d569e7a2bf7e0acfc0df - MIT OR Apache-2.0
-  glyphsift  5ff0c47ec1fcb0b8d1c80f0029aa89ab78e03d2e - Apache-2.0
+  runtime    ac167c9d671d9cb20fdf730a541aa0ca30c0e0c5 - Apache-2.0
+  localdata  da39477efae49759e5c3d5841c52db178a9ce2a3 - Apache-2.0
+  pagetriage 1de5ff58785f7ffc4a61154f20f5794745922903 - MIT OR Apache-2.0
+  glyphsift  b3ea291cc610b16fac6a4fc943bf62df0623a486 - Apache-2.0
 (These are the Sprint 4 heads; the architect rewrites deps.lock.json and this list at wrap-up, and a test keeps the two equal.)
 
 Development dependencies (not distributed) are listed in package.json with their
