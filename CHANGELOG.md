@@ -9,7 +9,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Sprint 4 (14 Nov 2026, committed, not pushed): re-vendored the runtime contracts at spec release 0.4.0
+- Sprint 5 (18 Nov 2026, committed, not pushed; version 0.2.0-dev): the real pipeline. A PDF goes through pagetriage (WebAssembly, analysis worker), text-layer
+  extraction with pdfjs-dist 6.5.438 (hardened, a fresh worker per document, 60 s timeout), chunking, the glyphsift gate (`gate()`, default threshold
+  975000 ppm, the reason shown when a chunk is held), embeddings through the runtime worker host (multilingual-e5-small), localdata documents (namespace
+  `dockit.d<docId>`, memory by default, an opt-in to keep a document with Delete removing it physically), retrieval (k = 4) and an answer from Qwen3-0.6B
+  (8-bit, single-threaded WebAssembly) with the retrieved chunks and their page numbers as sources. Retrieved text is untrusted: a sanitiser removes
+  special tokens, tag characters, bidi controls, `<source` and `[S<n>]`; citations map to chunk metadata and an invented `[S9]` is dropped. Refusals in
+  plain words: not a PDF, over 20 MiB (before the file is read), too many pages, encrypted, corrupt, no text layer ("OCR is not yet supported"),
+  timeout, model not cached, manifest refused (with its reason), integrity, framed. (D5-05, D5-06)
+- Capability card wired to the runtime profile (`detectCapabilities()`, the 8 GB note and the verdict against the model's minimum). (D5-06)
+- `scripts/assemble-deps.mjs` and `deps.lock.json` (TD-40): the four sibling builds from pinned commits, `vendor/PROVENANCE.json`, a stub mode for CI
+  (`DOCKIT_DEPS=stub`, `npm run build:check`), and a `pages.yml` that checks the siblings out at the locked commits, builds the signed model bundle and refuses
+  a `dist/` over 1 GB (1,000,000,000 bytes). `npm ci --ignore-scripts` everywhere; per-job permissions; no secrets. (D5-04)
+- The model bundle (about 754 MiB) is verified against a manifest signed by an ephemeral in-memory key whose public half is compiled in
+  (`dev.airplanemode.dockit-models`, pinned with `expectManifestId`, every entry under `models/`); the verified manifest is stored (IndexedDB) and
+  re-verified on every load, so the offline restart works. (D5-06)
+- The exact CSP (default-src 'none', `worker-src 'self' blob:`, three Trusted Types policies), pinned by `test/csp.test.ts`; the service worker is
+  registered with the scope of the document base, serves navigations from the verified precache, and passes `models/`, `blob:` and `data:` through. (D5-07)
+- `scripts/make-fixture-pdfs.mjs` (deterministic, `--check`) and `test/fixtures/pdf/`: `policy-3p.pdf`, `injection.pdf`, `scanned.pdf`, `corrupt.pdf`,
+  `encrypted.pdf`, `deva-clean.pdf`, `deva-noised.pdf`; `test/fixtures/questions.json` (seven fixed questions). The oversize file, the 301-page file and the
+  decompression bomb are generated at test time. (D5-08, D5-10)
+- `npm run test:e2e` (the offline proof in installed Chrome with a CDP request counter over every target), `npm run test:gate` (the Devanagari gate with real
+  pdf.js and the real glyphsift WebAssembly) and `npm run bench:e2e` (at least 5 runs and a restart run, with process RSS, JS heap and WebAssembly memory under
+  their own names). Local only. (D5-08, D5-10)
+- `NOTICE` and `public/THIRD-PARTY-NOTICES.txt` list pdfjs-dist, transformers.js, ONNX Runtime Web, Qwen3-0.6B and multilingual-e5-small with source repository and
+  pinned revision. (D5-09)
+- Fix round 1 (18 Nov 2026): an end-to-end test of data at rest (`test/e2e.spec.ts`): with "Keep on this device", Delete followed by a reload leaves 0 files under
+  `__ld_doc.dockit.d<docId>`, no `dockit.kept` row and an empty kept list (also when deleted from the kept list after a reload); by default OPFS and IndexedDB hold
+  no document namespace and the IndexedDB database `dockit` holds only the manifest store. Run against a build with `clear(ns)` stubbed out it fails. (D5-FIX1-16)
+- `laptop_8gb` column in `docs/benchmarks/e2e.csv` and `e2e-questions.csv`: every row reads `not measured on 8 GB`; `scripts/lib/bench-columns.mjs` refuses to write a row
+  without it and `bench-readme.mjs` refuses to build the README table from one. (D5-FIX1-06)
+- `test/helpers/tamper.ts`: aimed tampering with the manifest (a whitespace-tolerant lookup of a sha256 value, one hex digit changed) with `assertWellAimed`, which fails a
+  tamper test whose flipped byte is not a hex digit inside a hash or leaves the file unparseable. (D5-FIX1-02)
+
+### Changed
+
+- Re-vendored the runtime contracts at spec release 0.5.0 (manifest 0.1.2, event 0.1.4, storage API 0.3.0, backend adapter 0.4.0; capability profile 0.1.0
+  and model descriptor 0.2.1 unchanged). The in-memory store of the earlier skeleton is gone: localdata's memory driver replaces it.
+- The skeleton's stage stubs, `MockAdapter` and the planned-model card are removed.
+- A chunk of at least 200 units closes at a page boundary and no overlap crosses a page boundary, so a citation names the page the text is on.
+- `index.html` CSP: from the Sprint 3 policy to the Sprint 5 one (see Added).
+- The capability card note no longer says that browsers cap the reported memory at 8 GB (Chrome 157 reports 32 on a 48 GB Mac): it says that `ramGb` is the
+  rounded memory the browser reports through `navigator.deviceMemory`, not free memory. The contract wording is reconciled in the next spec patch (TD-57). (D5-FIX1-05)
+- `pages.yml` refuses a `dist/` over 1,000,000,000 bytes (GitHub's documented 1 GB limit for a Pages site), not 1 GiB. (D5-FIX1-17)
+- The "Keep on this device" warning now also says what a kept document holds (chunk text, embeddings, page numbers and the SHA-256 of the file, all unencrypted) and that the
+  hash can confirm whether a known document was processed. (D5-FIX1-17)
+- A passage that the embedder or the store refuses on its own is set aside (reason `not_analysed`, shown with its page and a plain message) and the rest of the document is
+  indexed; a document in which no passage could be embedded or stored still fails with the first error. Systemic failures (integrity, profile, abort) still stop the document. (D5-FIX1-09)
+- The README and the benchmark page say what "requests after offline = 0" counts (application requests from the page, its workers and its service worker; the browser's own
+  check of `/dockit/sw.js` and the favicon fetch are not in it), and the by-hand PowerShell memory sampler hands its loop to the child in single quotes. (D5-FIX1-07, D5-FIX1-10)
+
+### Security
+
+- Output sinks: the answer is one text node (`white-space: pre-wrap; unicode-bidi: plaintext`), tag characters and bidi controls are dropped, there is no
+  markdown, no auto-linking and no href from model or PDF text; a test forbids the DOM sinks listed in the README.
+- A framed copy of the page shows only a link to open dockit directly (reason `framed`).
+
+### Fixed
+
+- A model load that failed with the engine code `backend` right after the download finished is retried once after 1.5 s (Chrome 157 does not always let the engine read a file written less than a second earlier; the cause is open). `download()` and `load()` turn a failed manifest fetch into the documented refusals (`model_not_cached`, or the stored manifest's own `manifest_refused`) instead of an unexplained error. (D5-06)
+- The pdf and analysis workers are really terminated: `startModuleWorker`'s `terminate()` is called through a wrapper, not through an override of the Worker's own `terminate`, which had made the native terminate unreachable. (D5-05)
+
+- `.gitignore` (and `.prettierignore`): the unanchored `deps/` rule swallowed `src/deps/`, so a fresh clone could not typecheck or build and `pages.yml` was red. The rule is
+  now `/deps/` (the folder `pages.yml` checks the siblings out into); `src/deps/**` is committed, including the zero-key `src/deps/stub/trust-root.ts` (TD-58; a test pins its
+  keyId to 64 zeros). Proved in a copy made from `git ls-files -co --exclude-standard`: `npm ci --ignore-scripts && npm run ci` exits 0. (D5-FIX1-01)
+- The tamper cases of `test/e2e.spec.ts` now flip a hex digit of a sha256 value (they used `indexOf('"sha256":"') + 12` on a pretty-printed manifest, flipped a byte of
+  `"spec"` and so tested the JSON parser): the refusal asserted is `no_valid_signature`, for the stored manifest (S-OFF-1) and for the server copy, and the parse failure is a case of its own. (D5-FIX1-02)
+- A page that pagetriage cut short at a stream or content limit (a decompression bomb) refuses the document as `too_large` with "A part of this PDF is larger than dockit will
+  unpack, so it was not read.", not as `no_text_layer` ("it looks scanned"). The README Limitations now say that a hostile PDF that hides a very large compressed font or image
+  can still exhaust the tab's memory (stream accounting is planned for Sprint 6, S1-107) and record what S1's font-bomb fixture did in Chrome. (D5-FIX1-08)
+- A lone surrogate in extracted text (pdf.js can emit one from a broken ToUnicode map) no longer reaches the gate, `embed()` and `putDocument()`: `normaliseText` applies
+  `toWellFormed()` after NFC, and one refused passage no longer ends the whole document as a generic error. (D5-FIX1-09)
+- `package-lock.json` root version is 0.2.0-dev, like `package.json`. (D5-FIX1-11)
+- `src/trusted-types.ts` header names the three Trusted Types policies of the CSP, not one. (D5-FIX1-17)
+
+- Fix round 2 (18 Nov 2026), Stop then Ask (BUG-T1-S5-R2-01): Stop ends the engine worker (backend adapter R8), and the next question used to be refused as `model_not_cached`
+  ("The model is not downloaded...") although every file was on the device, until the page was reloaded. The controller now tracks whether the adapters are loaded: after an
+  abort, or when a generate (or an embed) rejects `not_loaded`, the next use goes through the same load path again (`models.load()`: the stored manifest is re-verified, S-OFF-1,
+  the signature and `expectManifestId` are checked, the files are read from the cache and hashed in the worker, R15), once. The model card reads `Loading the model again from this
+device...` while it does, and Ask is disabled until it settles. A re-load that fails shows its own reason (`manifest_refused`, `integrity`), and `model_not_cached` only when the
+  load says a file is really missing (`not_cached`, or no stored manifest). `not_loaded` is no longer mapped to `model_not_cached` by `mapAdapterError`. Tests: unit cases with
+  fakes that end the engine on an abort, and two Chrome cases (Stop while streaming, Stop within 1 s) that then ask the grace-period question offline: 45, page 2, 0 requests,
+  no download. (D5-FIX2-01)
+- Stop before the first token is shown as `Stopped.` (BUG-T1-S5-R2-02): no answer text, no refusal, never `data-reason="corrupt"`. `pipeline.stage` generate and `pipeline.answer`
+  carry outcome `skipped`; no new `PIPELINE_REASONS` value. The runtime's `AdapterError` is a different class from the vendored one, so errors are recognised by name and code
+  (`isAdapterError`); `ADAPTER_OUTCOMES` maps every `AdapterErrorCode` to its intended refusal, stop or plain failure (a table test; a plain failure is `The answer failed.` with the reason
+  `failed`, not `corrupt`). (D5-FIX2-02)
+- `docs/benchmarks/e2e-questions.csv` has a new column `top_retrieved_page_ok` (BUG-T1-S5-R2-05, TD-59): `correct_source_page` is now true only when a CITED source shown to the user
+  names the expected page, so a refused answer (which cites nothing) is no longer credited with a correct source page; retrieval quality is its own column. The headline
+  figure keeps its definition (the answer holds the expected text AND `correct_source_page`). Both CSVs were regenerated by a fresh `npm run bench:e2e` (every row kept, none selected).
+  The README table, the benchmark script and the site import changed with it. (D5-FIX2-04)
+- The Sprint 4 history lines are dated: as of 14 Nov 2026, before the owner's push on 15 Nov. (T3-R1-05, D5-FIX2-05)
+
+### Removed
+
+- The Sprint 1 to 4 placeholder pipeline and its "Run placeholder pipeline" button.
+
+### Added (earlier sprints)
+
+- As of 14 Nov 2026, before the owner's push on 15 Nov: Sprint 4 (14 Nov 2026, committed, not pushed): re-vendored the runtime contracts at spec release 0.4.0
   (manifest 0.1.1, which is manifest spec v0.1 published in runtime/spec (committed; public after the owner's
   push); capability profile 0.1.0, event 0.1.3, storage API 0.2.0, backend adapter 0.3.1 and model descriptor
   0.2.1 are draft). `sync-contracts` checked every source file against SPEC-LANDED.txt first. (D5-01)

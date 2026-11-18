@@ -1,239 +1,232 @@
 # dockit
 
-Offline document intelligence kit: an installable web app that will answer questions about
-PDF documents entirely on the device, built from the Airplane Mode Labs libraries
-(pagetriage, glyphsift, localdata, runtime).
+Offline document intelligence kit: an installable web app that answers a question about a PDF with a small local model, entirely
+in the browser tab. Built from the Airplane Mode Labs libraries (pagetriage, glyphsift, localdata, runtime).
 
 ## Status
 
-Skeleton (Sprint 4, 14 Nov 2026; committed, not pushed, so the live demo shows Sprint 2 until the owner
-pushes). There is no document processing in this build: every pipeline stage returns a labelled
-placeholder and the UI says so in a banner. What exists is the installable PWA shell (web app manifest,
-strict content security policy with Trusted Types for scripts, hash-verified service-worker precache,
-offline page), the pipeline stage interfaces typed against the runtime contracts re-vendored at spec
-release 0.4.0 (manifest 0.1.1, which is manifest spec v0.1 published in runtime/spec (committed; public
-after the owner's push); the other contracts are draft), an Answer card that shows the planned model and
-backend chain as a plan only, and the tests that pin the service worker's behaviour and the CSP. No model
-is loaded, no inference runs and no vector index is wired in. The first working demo (page triage,
-extraction, glyph gate, local store, local model) is Sprint 5. A WebLLM rung is not yet (cut from
-Sprint 4).
+Sprint 5 (18 Nov 2026): Working: ask a question about a PDF and read an answer from a small local model (Qwen3-0.6B, WebAssembly) with the source
+pages shown; page triage (pagetriage), text-layer extraction (pdf.js in its own worker), a glyph gate for Devanagari text (glyphsift) with the reason
+shown when a passage is held back, chunks and vectors in localdata, and a capability card; scanned, oversize, corrupt and encrypted files and a missing
+or tampered model are refused in plain words; after the one-time model download no request leaves the page (proved on a local build in installed
+Chrome on an Apple M5 Pro 48 GB, not measured on 8 GB; the live page changes only after the owner pushes). Not yet: OCR, a Windows or 8 GB figure, the
+pilot model (Qwen3-1.7B), a real signing key, WebLLM (cut), multi-document chat.
+
+Done-when: build done on Apple M5 Pro 48 GB; 8 GB Windows done-when NOT met (owner runbook step 5). The one machine used for every figure in this
+repository is an Apple M5 Pro with 48 GB; nothing has been measured on an 8 GB Windows laptop.
+
+## What it does
+
+1. **Choose or drop a PDF.** The file stays in the tab; nothing is uploaded. A file over 20 MiB is refused before it is read.
+2. **Triage** each page with pagetriage (WebAssembly, in the analysis worker): encrypted files and files over 300 pages are refused, and each page is
+   routed by its text-layer state (text, an OCR layer under an image, or an image only). A page that pagetriage had to cut short at one of its stream
+   or content limits (a decompression bomb) refuses the whole file as `too_large`: "A part of this PDF is larger than dockit will unpack, so it was
+   not read." It is never reported as a scanned file.
+3. **Extract** the text layer with pdf.js (`pdfjs-dist`, in a fresh worker per document, hardened: no eval, no XFA, no fonts, no range or stream, only
+   `getTextContent`, never render, annotations or scripts; a 60 second timeout terminates the worker).
+4. **Chunk** deterministically (the text is first made well-formed: an unpaired surrogate, which pdf.js can emit from a broken ToUnicode map, becomes
+   U+FFFD, because the gate, the embedder and the store all refuse an ill-formed string; target 700, at most 1,000 UTF-16 units, overlap 100, at most two pages per chunk, split at a blank line, a danda, a
+   sentence end or a newline; a chunk of at least 200 units closes at a page boundary so a citation names the page the text is on).
+5. **Gate** each chunk with glyphsift's `gate()` (analysis worker). A chunk it holds is not indexed, and the reason (`held_low_score`, with its score
+   and the threshold in parts per million) is shown. Text the gate has nothing to say about (Latin text, no letters) passes marked `not_scored`.
+6. **Embed** `passage: <text>` in batches of 32 through the runtime worker host (multilingual-e5-small, 8-bit, 384 dimensions), store chunks and vectors
+   with localdata in a namespace of their own (`dockit.d<docId>`, in memory unless you choose to keep the document), and **retrieve** the four nearest
+   chunks to `query: <question>`. If the embedder or the store refuses a single passage on its own, that passage is set aside (it is shown as not
+   indexed, reason `not_analysed`, with its page) and the rest of the document goes on. A failure that is not about one passage (an integrity failure,
+   an unsupported profile) still stops the document with its own message, and so does a document in which no passage could be embedded or stored.
+7. **Answer** with Qwen3-0.6B (8-bit, single-threaded WebAssembly) from a fixed system message and the retrieved chunks wrapped as
+   `<source id="S1" page="2">...</source>`. Retrieved text is untrusted: special tokens, tag characters, bidi controls, `<source` and `[S<n>]` are
+   removed before it reaches the model. The answer is rendered as one text node; citations `[S1]` to `[S4]` map to the retrieved chunks' own page
+   metadata, and a citation the model invents (`[S9]`) is dropped and counted. **Stop** ends the answer: a Stop before the first token shows
+   "Stopped." with no answer text, a Stop after it keeps the words written so far, and the next question first loads the model again from this
+   device (see Limitations).
+
+A capability card shows the runtime's profile (gpu, ramGb, storageFreeGb, cores, backendTier, with the note that `ramGb` is the rounded memory the browser reports through `navigator.deviceMemory`, not free memory) and the
+verdict against the model's minimum. Every refusal has a plain-language message (a scanned PDF reads "This PDF has no text layer (it looks scanned).
+OCR is not yet supported.").
 
 ## Install
 
-Requirements: Node 22 or newer, npm, and Google Chrome for the browser tests.
+Requirements: Node 22 or newer, npm, Google Chrome (Playwright uses the installed Chrome; no browser is downloaded), and the Rust 1.98 toolchain with
+the `wasm32-unknown-unknown` target for the sibling WebAssembly builds.
 
 ```sh
 git clone https://github.com/AirplaneMode-Labs/dockit
 cd dockit
-npm ci
+npm ci --ignore-scripts
 ```
 
-`.npmrc` disables install scripts (`ignore-scripts=true`), so nothing runs during `npm ci`.
-`npm run deps:scripts` lists the packages that declare install scripts; they are not
-executed.
+`.npmrc` disables install scripts, so nothing runs during `npm ci`. dockit is a private application (`@airplanemode/dockit`, `private: true`),
+deployed to GitHub Pages and built from a clone; it is not installed from npm, PyPI or crates.io. The npm scope `@airplanemode` and the registry names
+are not reserved and the name in `package.json` is a placeholder. Nothing is published.
 
-Not a registry package (the "Not published yet" sentence in the conventions does not apply here):
-dockit is a private application (`@airplanemode/dockit`, `private: true`) that is deployed to GitHub
-Pages and built from a clone, not installed from npm, PyPI or crates.io. The npm scope `@airplanemode`
-and the registry names are not reserved, and the name in `package.json` is a placeholder.
+The page is built from four sibling repositories at the exact commits in `deps.lock.json` (runtime, localdata, pagetriage, glyphsift); their builds
+are never committed (`vendor/`, `public/models/`, `public/app/ort/` and `src/generated/` are git-ignored).
 
-## Quick start
+## Usage
 
 ```sh
-npm run build      # vite build, service-worker logic build, precache injection
-npm run preview    # serves dist/ on http://127.0.0.1:4173/
+node scripts/assemble-deps.mjs --siblings .. --allow-dirty   # builds the four siblings, the signed model bundle, vendor/ and public/models/
+npm run build                                                # vite build, service-worker logic, precache injection; refuses without vendor/
+npm run preview                                              # http://127.0.0.1:4173/
+npm run ci                                                   # fmt, typecheck, tests and a stub build: no siblings needed
+npm run test:e2e                                             # the offline end-to-end proof in installed Chrome (local only)
+npm run test:gate                                            # the Devanagari gate in Chrome (local only)
+npm run test:browser                                         # the PWA and /dockit/ sub-path specs on the real build (local only)
+npm run bench:e2e                                            # the benchmark (local only)
 ```
 
-Open the preview URL in Chrome. The app registers its service worker, precaches the shell
-after verifying every file's SHA-256, and can then be reloaded with the network off. Use the
-browser's install button (or the in-app one, once Chrome offers the prompt) to install it.
-"Run placeholder pipeline" runs the six stage stubs on synthetic bytes generated in the page
-and shows the resulting Event 0.1 events.
+`assemble-deps` re-checks `git rev-parse HEAD` of each sibling against the lock (exit 2 on a mismatch) and refuses a tree with uncommitted changes
+unless `--allow-dirty` (the commit is then recorded as `<sha>-dirty`). `--checkouts <dir>` takes clean checkouts at the locked commits instead, which
+is what `pages.yml` does. It writes `vendor/PROVENANCE.json` with the hash of every file taken from a sibling.
 
-For development, `npm run dev` serves the source on http://127.0.0.1:5173/ without the
-service worker; the dev server strips the CSP meta because React fast refresh needs an
-inline preamble. Production builds keep the CSP verbatim.
+`npm run build:check` (used by `npm run ci`) builds in stub mode (`DOCKIT_DEPS=stub`): the sibling builds are replaced by stand-ins, the page says
+"stub build" and the result is never deployed. `npm run build` fails without `vendor/PROVENANCE.json`.
 
-## How it works
+The model bundle (about 754 MiB, at most 900 MiB) is built by runtime's `scripts/bundle-models.mjs`: every file the engine reads is an entry of a
+manifest signed with a key generated in memory for that build and never exported; the public half is compiled into the page. The signature proves that
+the manifest and the bundle came from the same build, not who published them. There is no `expiresAt`, so the page keeps working offline.
 
-- `index.html` carries the content security policy as a meta tag (see Security and privacy).
-- `public/sw.js` is the hand-written service worker. Its routing rules are the pure module
-  `src/sw-logic.ts`, unit-tested in Node and bundled into the worker by the build.
-  `scripts/inject-precache.mjs` lists every file of the built shell with its SHA-256 and a
-  build hash derived from `dist/.vite/manifest.json`. On install the worker fetches each
-  entry, hashes it with WebCrypto, refuses to cache anything that does not match, and only
-  then fills the cache `dockit-precache-<buildHash>`. On activate it deletes only stale
-  `dockit-precache-*` caches (the Pages origin is shared with the other demos, whose caches are
-  left alone). The fetch handler passes through (does not answer) any request that is not GET, is
-  cross-origin, carries a Range header, has a path under `/assets/`, or ends with
-  `/manifest.json`; navigations are network-first with the cached shell or `offline.html` as
-  fallback; precached files are cache-first; nothing else is cached. If a precached file misses
-  the cache and its re-fetch fails the SHA-256 check, the worker answers with the offline page
-  (navigations) or a synthetic 503 and never the unverified body.
-- Vite's bundle directory is `app/` instead of the default `assets/`, so `/assets/*` stays
-  reserved for large model and data files that the runtime asset manager downloads with
-  Range requests and verifies itself.
-- `src/pipeline/` holds the stage stubs (`pdf`, `triage`, `extract`, `glyphGate`, `store`,
-  `answer`) as pure async functions with injected dependencies, composed by `run.ts`.
-  `pdf.ts` always returns `pageCount: 'unknown'`; `extract.ts` returns source `none`;
-  `glyphGate.ts` passes with `cleanFraction: null`; `store.ts` writes one count record
-  through an in-memory `StorageApi`; `answer.ts` asks a local `MockAdapter` and prefixes the
-  text with `placeholder:`.
-- `src/pipeline/events.ts` is a local copy of the runtime's Event 0.1 rules: attrs keys are
-  validated, keys that could carry text or identifiers are refused, strings are truncated to
-  1024 characters and query strings are stripped. Events go to an in-memory ring buffer shown
-  in the UI.
-- `src/pipeline/model-plan.ts` holds the planned production model, its sizes and source, and the
-  backend fallback chain (WebGPU, then WebAssembly, then the opt-in Chrome built-in model, then
-  refuse), shown on the Answer card. It also holds a feature-detection prediction: the result of
-  `navigator.gpu?.requestAdapter()` is reduced to a boolean (adapter info is never read,
-  displayed or stored), `typeof WebAssembly`, and `'LanguageModel' in globalThis` only
-  (`availability()` and `create()` are never called). Display only; no inference engine is
-  imported and no request is made. `answer.ts` stays a stub.
-- `src/trust.ts` exports an empty, frozen `TRUSTED_KEYS` map. Real keys are compiled in
-  before any pilot; dockit has no other trust-set code.
+### Run the end-to-end benchmark
 
-## Contracts
+This is runbook step 5 of the Airplane Mode Labs plan (an 8 GB Windows laptop with Wi-Fi off). **`bench:e2e` has never run on Windows; this run is the
+first.** In Windows PowerShell, in a clone of dockit with the sibling repositories next to it:
 
-`src/contracts/` vendors the six runtime contract files as published in spec release 0.4.0
-(2026-11-14, untagged), each with its own version in its header: `manifest.ts` 0.1.1 (status published:
-this is manifest spec v0.1, published in runtime/spec (committed; public after the owner's push)),
-`capability-profile.ts` 0.1.0, `event.ts` 0.1.3, `storage-api.ts` 0.2.0, `backend-adapter.ts` 0.3.1 and
-`model-descriptor.ts` 0.2.1 (all draft). The source of truth is `runtime/spec`. `npm run sync-contracts`
-copies them from a sibling checkout, but only after every source file's sha256 equals its line in
-runtime's SPEC-LANDED.txt; on any mismatch or missing line it fails and copies nothing. It reads
-SPEC-LANDED.txt from env `SPEC_LANDED`, else the highest-numbered
-`<workspace>/evidence/sprint-<n>/D1/SPEC-LANDED.txt` that exists (compared as a number, so sprint-10
-beats sprint-9); no scratch path is read, and a `SPEC_LANDED` that names a missing file is an error
-rather than a fall-through. Until the architect copies D1's SPEC-LANDED.txt to `evidence/sprint-4/D1/` at
-wrap-up, a run without `SPEC_LANDED` finds the Sprint 3 copy and reports `sha-mismatch` for the 0.4.0 files,
-which is the fail-closed behaviour, not a bug. `--check` reports in-sync or drift per file and writes nothing.
-`test/contracts-sync.test.ts` fails on drift (it is skipped when the sibling is absent). dockit only
-uses these as types; nothing in this build calls the runtime. Storage API 0.2.0 adds `putVectors()`,
-`indexInfo()` and a working `query()`; dockit's in-memory store implements the interface's key-value half
-only: `query()` and `putVectors()` reject `not_implemented` naming Sprint 5 and `indexInfo()` resolves
-`undefined`, because index wiring is Sprint 5.
+```powershell
+npm ci --ignore-scripts
+node scripts/assemble-deps.mjs --siblings ..
+npm run build
+$env:DOCKIT_BENCH_CSV="$PWD\e2e-8gb.csv"; $env:DOCKIT_BENCH_Q_CSV="$PWD\e2e-questions-8gb.csv"; npm run bench:e2e
+```
+
+Turn Wi-Fi off when the script prints `cache phase done` (it also blocks the network itself, and counts requests with the Chrome DevTools Protocol
+over the page, its workers and its service worker). Process memory is sampled by the script through one long-running Windows PowerShell 5.1 child
+every 500 ms, summing `WorkingSetSize` over the Chrome processes of the test profile (the folder named on the first line of the script's output,
+`profile <folder>`, always called `chrome-profile-...`). To watch the same figures by hand, in a second PowerShell window while `bench:e2e` runs
+(the loop is handed to the child in single quotes, so the outer shell does not expand `$true`; `''` is a single quote inside it; it lists the
+processes whose command line carries the test profile's `--user-data-dir`, so add up `WorkingSetSize` over the lines of one sample; the benchmark
+itself also adds the child processes that carry no such flag). **This sampler has never run on Windows**; the owner's run is the first.
+
+```powershell
+powershell.exe -NoProfile -Command 'while ($true) { Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like ''*--user-data-dir=*chrome-profile-*'' } | Select ProcessId,ParentProcessId,WorkingSetSize,CommandLine | ConvertTo-Json -Compress; Start-Sleep -Milliseconds 500 }'
+```
+
+Task Manager (Details, `chrome.exe`, the memory columns) is the cross-check. If anything fails, send back: the full console log, both CSVs even if
+partial, the Chrome version, and the Task Manager reading.
 
 ## Demo
 
-Live demo: <https://airplanemode-labs.github.io/dockit/>. Built from `main` by
-`.github/workflows/pages.yml` on every push; it shows only what works today and has a box titled
-"What this demo does not do yet". It runs entirely in the browser: no upload, no analytics, no
-third-party scripts or fonts.
+Live demo: <https://airplanemode-labs.github.io/dockit/> (built from `main` by `.github/workflows/pages.yml`). **The live page changes only after the
+owner pushes**, and it works only after the first run of `pages.yml` is green: that first deploy is the only real check of the GitHub Pages size and
+deploy-timeout limits for a 754 MiB bundle. Until then the live page shows an earlier sprint; this sprint's page is proven on a local build served
+under `/dockit/` by a server that answers 404 for every other path.
 
-Installing from the Pages URL gives the app the scope `/dockit/`, and all Airplane Mode Labs
-demos share the `airplanemode-labs.github.io` origin, so the service worker deletes only its own
-stale `dockit-precache-*` caches and never another demo's storage. The home screen says that
-document processing is not built yet, lists the six pipeline stages with their status and the
-sprint each lands in, shows live browser-requirement checks and the service worker's scope, and
-keeps the Install button. Sprint 2 added an Answer card with the planned model, the backend fallback
-chain and a feature-detection prediction (no inference, no request); Sprint 3 worded that card from
-runtime's LANDED.json (the runtime engine runs in a worker) and turned on Trusted Types for scripts.
-Sprint 4 (14 Nov 2026) re-vendors the contracts at spec release 0.4.0, words the chain sentence "runtime
-0.2.0-alpha.1 runs the engine in a worker", and says WebLLM only as "a WebLLM rung (cut from Sprint 4)" in
-the not-yet box; the CSP is byte-identical to Sprint 3, pinned by `test/csp.test.ts`. `test/subpath.spec.ts`
-proves the same build under `/dockit/` on a server that answers 404 for everything else. Until the owner
-pushes, the live demo shows Sprint 2; the refresh is proven on a local build served under `/dockit/`.
+The page has a box titled "What this demo does not do yet". It shows a build id: `Built from main at <sha12>` from CI, or `Local build <sha12>[-dirty]`.
 
 ## Benchmarks
 
-Not measured. Nothing in this build processes a document, so there is nothing honest to
-time. The 8 GB Windows no-GPU laptop figures arrive with the Sprint 5 demo.
+Every row names its machine, the command and the commit. Peak memory is the peak summed resident size of the test Chrome's process tree; the JS heap
+and the workers' WebAssembly memory are different figures under their own names. **Not measured on 8 GB**: the last column says so in every row, and so does the `laptop_8gb` column of both CSVs.
+
+**Requests after offline = 0 counts application requests:** the ones made by the page, its workers and its service worker (a Chrome DevTools
+Protocol counter over every target). The browser itself may still check `/dockit/sw.js` for an update and fetch the favicon; this count does not include
+those two requests, and dockit's code makes neither of them.
+
+<!-- prettier-ignore-start -->
+<!-- bench:start -->
+| Machine | Run kind | Runs | Time to first token, ms (median / worst) | Total, ms (median / worst) | Peak memory: Chrome process tree (median / worst) | JS heap peak (median / worst) | Worker WebAssembly memory peak (median / worst) | Requests after offline | Command | Commit | 8 GB laptop |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Apple M5 Pro 48 GB | one session | 5 | 7,763 / 7,898 | 9,337 / 9,497 | 6,535 MiB / 6,628 MiB | 11 MiB / 37 MiB | 2,574 MiB / 2,574 MiB | 0 | `npm run bench:e2e` | `4bc19e9ae858-dirty` | not measured on 8 GB |
+| Apple M5 Pro 48 GB | after a Chrome restart | 1 | 7,892 / 7,892 | 9,490 / 9,490 | 6,410 MiB / 6,410 MiB | 34 MiB / 34 MiB | 2,574 MiB / 2,574 MiB | 0 | `npm run bench:e2e` | `4bc19e9ae858-dirty` | not measured on 8 GB |
+
+Question set (seven fixed questions over a synthetic three-page policy, results not selected): 4 of 6 correct with the correct source page on the first run; 24 of 36 over all 6 runs; the question with no answer was refused in 6 of 6 runs.
+
+Cited source page correct in 24 of 36 answerable rows (a refused answer cites nothing, so it never counts). Top-ranked retrieved passage on the right page in 36 of 36 (retrieval quality, reported on its own).
+<!-- bench:end -->
+<!-- prettier-ignore-end -->
+
+The CSVs (`docs/benchmarks/e2e.csv`, `e2e-questions.csv`) hold every run; none was left out. `e2e-questions.csv` keeps two page columns apart: `correct_source_page` is
+true only when a source the answer **cites** names the page that holds the answer (a refused answer cites nothing, so it is false), and `top_retrieved_page_ok` says
+whether the top-ranked retrieved passage is on that page (retrieval quality). The "N of M correct with the correct source page" figure is the answer holding the expected
+text AND `correct_source_page`.
 
 ## Limitations
 
-- The Answer card names the runtime chain as a plan only. runtime's LANDED.json marks the worker
-  engine green and WebLLM cut, so the card says runtime 0.2.0-alpha.1 runs its engine in a worker, lists
-  the Transformers.js rungs only, and mentions WebLLM only as "a WebLLM rung (cut from Sprint 4)" in the
-  not-yet box (team decision TD-08: revisited after the Sprint 5 8 GB measurement, Sprint 6 at the
-  earliest). The card describes runtime, not dockit: dockit imports no engine and loads nothing.
-  `RUNTIME_LANDED` is a hand-copied constant, checked against LANDED.json by a test only when that file
-  is reachable (env `LANDED_JSON`, or the workspace `evidence/sprint-<n>/D1/LANDED.json` files merged in
-  sprint order, because Sprint 4's file does not repeat the worker that landed in Sprint 3).
-- No vector index and no retrieval: the in-memory store's `query()` and `putVectors()` report
-  `not_implemented`. localdata's index is wired into dockit in Sprint 5. Not measured on 8 GB: nothing
-  here has been measured on an 8 GB laptop.
-- The vendored contracts are only as current as the last `npm run sync-contracts`, which needs the
-  sibling `runtime` checkout and SPEC-LANDED.txt; a clone without them keeps the committed copies
-  and the drift test is skipped.
-- No inference until Sprint 5. The Answer card shows the planned model
-  (Qwen3-1.7B, Apache-2.0, provisional until the Sprint 5 measurement on an 8 GB laptop,
-  contingency Qwen3-0.6B; loaded once in a browser in a local, unscored WebGPU smoke run of five synthetic Hindi prompts on an Apple-silicon Mac, which needed ONNX Runtime graph optimisation turned off) and a prediction from feature detection.
-  Nothing is downloaded or loaded, and the prediction is not a promise that the model will run.
-- The pipeline emits placeholder results only: no page count, no triage, no extraction, no
-  glyph scoring, no retrieval, no model answer.
-- No model is downloaded and no manifest is loaded; the trust set is empty.
-- Tested in Chrome only (Playwright channel `chrome`). Firefox and Safari are untested.
-- The CSP is delivered by a meta tag, which cannot set `frame-ancestors`; hosting must add
-  the headers listed below.
-- The icons are generated placeholders.
-- `npm run dev` runs without the service worker and without the CSP.
+- **Text-layer PDFs only. OCR is not yet supported:** a scanned PDF is refused, and image-only pages are skipped (`ocr_not_yet`).
+- **Qwen3-0.6B is a demo model, not the pilot model** (Qwen3-1.7B, hosted by the customer: its 4-bit graph alone is 1,426,069,098 bytes, over the 1 GB
+  GitHub Pages limit, so no demo loads it). Answers from a model this small can be wrong: check the source pages.
+- **Single-threaded WebAssembly:** GitHub Pages cannot send cross-origin-isolation headers, so the engine runs on one thread and a question takes seconds.
+- **Shared origin:** the demos live on `airplanemode-labs.github.io`, so storage and quota are shared. The models are held in the shared
+  `airplanemode-runtime` OPFS store, and any page of the origin can read what you choose to keep: "Keep on this device" stores a document unencrypted in
+  this browser profile (the warning is shown next to the option). By default documents stay in memory, and Delete removes them physically.
+- **What "Keep on this device" stores:** a kept document holds its chunk text, embeddings, page numbers and the file's SHA-256, all unencrypted. The
+  hash can confirm whether a known document was processed. The warning next to the option says the same.
+- **Not measured on 8 GB.** Every figure here is from an Apple M5 Pro with 48 GB. Nothing has run on Windows. The figures give a reason to expect trouble on 8 GB: during a question the summed resident size of Chrome's processes peaked near 7 GB and the two engine workers held about 2.5 GiB of WebAssembly memory (the answer model and the embedding model are both loaded). The sum counts a page shared between processes in each of them, so it overstates the memory used; whether the demo fits an 8 GB Windows laptop is exactly what the runbook run above measures.
+- **Stop ends the engine worker, so the next answer first loads the model again from this device.** The runtime's worker host terminates the worker on an abort
+  (backend adapter R8). dockit then loads the models again through the same path as the first load (the stored manifest is re-verified, the files are read from
+  the cache and hashed in the worker; nothing is downloaded and the page is not reloaded), the model card reads "Loading the model again from this device..." and
+  Ask stays disabled until it is done. A Stop before the first token shows "Stopped."; a Stop after it keeps the partial answer. Measured on the Apple M5 Pro
+  with 48 GB in Chrome 157 (the model card's time in "loading" in five Stop-then-Ask runs of `npm run test:e2e`, which prints each one): 1,683 to 1,936 ms, about 1.8 seconds. **Not measured on 8 GB**: the
+  model bundle is 754 MiB, so expect longer there.
+- **Hindi quality not measured.** The glyph gate is tested on synthetic Devanagari text layers (one clean, one damaged); answers over Hindi documents are
+  not evaluated. English synthetic fixtures are the only question set.
+- No real signing key: the manifest is signed by a key that exists only inside the build that made the page, so a visitor learns that the manifest and the
+  bundle belong together, not who published them (pre-pilot rows 1 and 2 are the owner's).
+- No WebLLM (cut, TD-08), no multi-document chat, no encryption at rest. The CSP is delivered by a meta tag, which cannot set `frame-ancestors`; a framed
+  copy shows only a link to open dockit directly.
+- Tested in Chrome only (Playwright channel `chrome`). Firefox and Safari are untested. CI runs `npm run ci` (formatting, types, unit tests and a stub build) on three operating systems; the browser, end-to-end, gate and benchmark runs need the sibling builds and the 754 MiB model bundle, so they run locally and on the owner's laptop, never in CI.
+- Chrome 157: a model file written less than about a second ago can fail its first read by the engine; the load is retried once after 1.5 s (`LOAD_RETRY_PAUSE_MS`). The cause is not understood and is not fixed in dockit.
+- pdf.js drops U+200C and U+200D from the text it extracts, so a joiner in a text layer never reaches dockit.
+- **A hostile PDF that hides a very large compressed font or image can still exhaust the tab's memory; stream accounting across fonts and images is planned (Sprint 6).**
+  pagetriage's own limits stop a content stream that inflates past its cap (refused as `too_large`, above), but a compressed font file or image is
+  not counted by dockit. Observed on 18 Nov 2026 with a font-bomb fixture (a text page whose embedded TrueType font file inflates to 1 GiB + 1, generated at test time, not committed), opened once in
+  installed Chrome 157 on the Apple M5 Pro 48 GB against the local build: it was accepted, not refused (pdf.js warned that the font has no `loca` table and
+  read the page's text; 1 page, 1 passage indexed), the page stayed usable and answered a question afterwards, and the peak summed resident size of
+  Chrome's processes during the 0.8 second open was 8,275 MiB, against 6,195 MiB idle before it (model loaded) and 7,221 MiB idle after it (one run,
+  two samples while it ran: an observation, not a measurement of the worst case). Not measured on 8 GB.
+- The first deploy of `pages.yml` is unproven: the Pages size and timeout limits for a 754 MiB artifact are checked only by the first real run.
 
 ## Security and privacy
 
 <!-- prettier-ignore -->
-This library makes no network requests other than the asset and manifest URLs you pass it, and sends no telemetry.
+After the one-time model download this app makes no network requests, and it sends no telemetry. The document never leaves the tab.
 
-Content security policy in `index.html`:
+Content security policy in `index.html` (pinned byte for byte by `test/csp.test.ts`):
 
 ```
-default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self';
-img-src 'self' blob: data:; font-src 'self'; connect-src 'self'; worker-src 'self';
-frame-src 'none'; media-src 'self'; manifest-src 'self'; object-src 'none';
-base-uri 'none'; form-action 'none'; require-trusted-types-for 'script';
-trusted-types dockit-sw
+default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self';
+img-src 'self'; style-src 'self'; font-src 'none'; manifest-src 'self'; media-src 'none'; frame-src 'none';
+object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script';
+trusted-types dockit-sw airplanemode-worker dockit-workers
 ```
 
-Trusted Types (Sprint 3): `require-trusted-types-for 'script'` makes every DOM script sink (for
-example `innerHTML` or `serviceWorker.register`) require a Trusted Types value. The CSP names
-exactly one policy, `dockit-sw`, with no `allow-duplicates` and no default policy. `src/main.tsx`
-creates it once through `src/trusted-types.ts`; its `createScriptURL` returns only a value
-exactly equal to `new URL('./sw.js', document.baseURI).href` and throws a `TypeError` for anything
-else, and the result is passed to `navigator.serviceWorker.register` (a plain string where
-Trusted Types is unsupported). `form-action` is `'none'` (it was `'none'` already in Sprint 2).
-React renders with DOM text and element APIs, so no broader policy was needed, and the source
-hygiene test forbids `dangerouslySetInnerHTML`. `test/pwa.spec.ts` proves 0 Trusted Types or CSP
-violations in normal use, that the service worker registers, that the offline reload works and
-that an injected `el.innerHTML = '<b>x</b>'` throws `TypeError`. `public/offline.html` keeps
-`script-src 'none'`, and `sw.js` has no `importScripts` and no `import` (tested).
+- `blob:` appears only in `worker-src`: runtime's `startModuleWorker` starts every worker (engine, pdf, analysis) from a blob bootstrap whose whole
+  source is one static import of an exact same-origin URL, and the worker inherits this CSP, so `script-src 'self'` still decides what it can load.
+- Trusted Types: three policies and no default policy, no `allow-duplicates`. Every worker runs the runtime's egress guard as its first statement; the
+  pdf worker may fetch only `<base>pdfjs/` and the analysis worker only `<base>vendor/`.
+- The service worker is registered with the scope of the document base (`/dockit/` on Pages), precaches the shell, the WebAssembly files and the pdf.js
+  assets after verifying every file's SHA-256, serves navigations from that cache, never sees a document or a model file (`models/`, `blob:` and `data:`
+  requests pass through), and reads caches only through its own cache name.
+- Model and PDF text reach the DOM only as text nodes (a test forbids `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `dangerouslySetInnerHTML`,
+  `document.write`, `srcdoc`, `createContextualFragment`, `setAttribute('href'|'src'|'style')`, `window.open`, `location =`, `eval(` and `new Function`).
+- The verified manifest is stored (IndexedDB database `dockit`) and re-verified on every load; offline, a stored manifest that fails verification
+  stops the load (`manifest_refused`) before any model byte reaches the engine.
+- Events carry counts, timings and enums only: never a file name, document id, title, text, question or answer. They are exposed to the runtime DevTools
+  panel through `window.__airplanemodeDevtools.snapshot()`.
 
-`'wasm-unsafe-eval'` is present because the pagetriage and glyphsift WebAssembly modules
-will be compiled from same-origin bytes; it permits `WebAssembly.compile` only, not
-JavaScript `eval`. `worker-src` is `'self'`; `blob:` is added only in the sprint that
-introduces a blob-URL worker, with a CHANGELOG justification. No `unsafe-inline`, no
-`unsafe-eval`, no remote origin.
+Headers that hosting must add (a meta tag cannot set them): `Content-Security-Policy` with `frame-ancestors 'none'`, `Cross-Origin-Opener-Policy:
+same-origin` (and COOP/COEP for threaded WebAssembly), `X-Content-Type-Options: nosniff` and a `Referrer-Policy`. GitHub Pages cannot set any of them;
+a dedicated origin is a pre-pilot item for the owner.
 
-Headers that hosting must add (a meta tag cannot set them):
-
-- `Content-Security-Policy` with `frame-ancestors 'none'` (and the directives above)
-- `Cross-Origin-Opener-Policy: same-origin`
-- `Cross-Origin-Embedder-Policy: require-corp`
-- `X-Content-Type-Options: nosniff`
-- `Referrer-Policy: no-referrer`
-
-What is stored where: the service worker's Cache Storage holds the hash-verified app shell
-under `dockit-precache-<buildHash>`; the pipeline's in-memory store holds nothing beyond
-the page lifetime. No cookies, no localStorage, no IndexedDB in this build.
-
-See SECURITY.md for the disclosure policy.
-
-## Develop
-
-```sh
-npm ci
-npm run ci             # fmt:check, typecheck, vitest, build
-npm run test:browser   # builds, serves dist/ on 127.0.0.1:4173, runs test/pwa.spec.ts in Chrome
-npm run icons          # regenerate public/icons/*.png (zero dependencies)
-npm run sync-contracts # copy ../runtime/spec/*.ts into src/contracts/ (sha256-checked, see Contracts)
-```
-
-Vitest is pinned at 4.1.12. With npm 10.9.8, adding or upgrading a package reports a
-peer-dependency conflict, so run `npm install --legacy-peer-deps` for that one command. `npm ci`
-from the committed lockfile needs no flag. We revisit this when vitest's peer range is updated.
-
-On Linux CI the browser step is preceded by `npx playwright install --with-deps chrome`;
-locally the installed Chrome is used and nothing is downloaded.
+See `SECURITY.md` for reporting.
 
 ## Licence
 
-Apache-2.0. See LICENSE and NOTICE.
+Apache-2.0 (`LICENSE`). Third-party notices are in `NOTICE` and `public/THIRD-PARTY-NOTICES.txt`: pdfjs-dist (Apache-2.0), transformers.js
+(Apache-2.0), ONNX Runtime Web (MIT), Qwen3-0.6B (Apache-2.0, base model Qwen/Qwen3-0.6B) and multilingual-e5-small (MIT per the intfloat model card),
+each with its source repository and pinned revision, and the four sibling builds with their commits.
+
+## Contributing
+
+See `CONTRIBUTING.md`. Tests come before the implementation, and CI must stay green on Linux, macOS and Windows (`npm run ci`). The contracts in
+`src/contracts/` are vendored from `runtime/spec` (spec release 0.5.0) and are never edited here: `npm run sync-contracts`.
