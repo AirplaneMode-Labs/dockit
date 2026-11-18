@@ -3,7 +3,7 @@
   "deps": {
     "runtime": {
       "repo": "AirplaneMode-Labs/runtime",
-      "commit": "ac167c9d671d9cb20fdf730a541aa0ca30c0e0c5"
+      "commit": "4f5b0116b07627c8278efc88a563621a2b5437a2"
     },
     "localdata": {
       "repo": "AirplaneMode-Labs/localdata",
