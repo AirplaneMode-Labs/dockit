@@ -1,40 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { Event } from './contracts/event.ts';
-import { EventLog } from './pipeline/events.ts';
-import { runPipeline, STAGE_ORDER } from './pipeline/run.ts';
-import {
-  browserEnv,
-  CHAIN,
-  CHAIN_SENTENCE,
-  MODEL_CARD_TEXT,
-  MODEL_PLAN,
-  PREDICTION_LABEL,
-  predictBackends,
-  WEBLLM_NOT_YET,
-  type Prediction,
-} from './pipeline/model-plan.ts';
+import type { AppController } from './app/controller.ts';
 import { StatusLine } from './status-line.tsx';
-import type { PipelineResult, StageName } from './pipeline/types.ts';
+import { AskCard } from './ui/AskCard.tsx';
+import { CapabilityCard } from './ui/CapabilityCard.tsx';
+import { DocumentCard } from './ui/DocumentCard.tsx';
+import { Framed } from './ui/Framed.tsx';
+import { ModelCard } from './ui/ModelCard.tsx';
+
+/** 'Built from main at <sha12>' (CI) or 'Local build <sha12>[-dirty]' (vite.config.ts decides, from the environment and git). */
+const BUILD_ID: string = String(import.meta.env['VITE_BUILD_ID'] ?? 'Local build unknown');
 
 interface BeforeInstallPromptEvent extends globalThis.Event {
   prompt(): Promise<void>;
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
 }
-
-/** Every stage is a stub in this build; the text is the same for all six on purpose. */
-const STAGE_STATUS = 'not built (stub returns a labelled placeholder)';
-
-const STAGE_LABELS: Record<StageName, { title: string; landsIn: string }> = {
-  pdf: { title: 'PDF (page count via pagetriage wasm)', landsIn: 'Sprint 5' },
-  triage: { title: 'Page triage (what is on each page)', landsIn: 'Sprint 5' },
-  extract: { title: 'Extraction (text layer or OCR)', landsIn: 'Sprint 5' },
-  glyphGate: { title: 'Glyph gate (glyphsift clean fraction)', landsIn: 'Sprint 5' },
-  store: { title: 'Local store (localdata over OPFS)', landsIn: 'Sprint 5 (localdata wiring)' },
-  answer: { title: 'Model answer (local model)', landsIn: 'Sprint 5' },
-};
-
-/** Set by the Pages workflow (VITE_BUILD_SHA=$GITHUB_SHA); 'local' for a developer build. */
-const BUILD_SHA: string = String(import.meta.env['VITE_BUILD_SHA'] ?? 'local').slice(0, 12);
 
 interface Requirement {
   id: string;
@@ -164,103 +144,22 @@ function useServiceWorkerState(): WorkerState {
   return state;
 }
 
-function syntheticBlob(): Blob {
-  // Synthetic bytes generated in the page; no document is read.
-  const bytes = new Uint8Array(4096);
-  crypto.getRandomValues(bytes);
-  return new Blob([bytes], { type: 'application/pdf' });
-}
-
-const yesNo = (b: boolean): string => (b ? 'likely available' : 'not detected');
-
-function usePrediction(): Prediction | null {
-  const [p, setP] = useState<Prediction | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void predictBackends(browserEnv()).then((r) => {
-      if (!cancelled) setP(r);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return p;
-}
-
-function ModelPlanCard() {
-  const prediction = usePrediction();
-  return (
-    <section className="card card-wide" data-testid="model-plan">
-      <h2>Answer: planned model and backend chain</h2>
-      <p data-testid="model-card">{MODEL_CARD_TEXT}</p>
-      <ul className="reqs">
-        <li data-testid="plan-webgpu">
-          WebGPU: {MODEL_PLAN.webgpu.dtype}, {MODEL_PLAN.webgpu.bytes.toLocaleString('en-US')} B
-        </li>
-        <li data-testid="plan-wasm">
-          WebAssembly: {MODEL_PLAN.wasm.dtype}, {MODEL_PLAN.wasm.bytes.toLocaleString('en-US')} B
-        </li>
-        <li data-testid="plan-source">
-          Source: <code>{MODEL_PLAN.source}</code>
-        </li>
-      </ul>
-      <h3>Fallback chain (in order)</h3>
-      <p className="muted small" data-testid="chain-sentence">
-        {CHAIN_SENTENCE}
-      </p>
-      <ol data-testid="chain">
-        {CHAIN.map((r) => (
-          <li key={r.id}>{r.label}</li>
-        ))}
-      </ol>
-      <h3>This browser</h3>
-      <dl className="kv" data-testid="prediction">
-        <dt>WebGPU</dt>
-        <dd data-testid="pred-webgpu">{prediction ? yesNo(prediction.webgpu) : 'checking'}</dd>
-        <dt>WebAssembly</dt>
-        <dd data-testid="pred-wasm">{prediction ? yesNo(prediction.wasm) : 'checking'}</dd>
-        <dt>Chrome built-in model API</dt>
-        <dd data-testid="pred-builtin">
-          {prediction
-            ? prediction.builtinPresent
-              ? 'present (opt-in only)'
-              : 'not detected'
-            : 'checking'}
-        </dd>
-      </dl>
-      <p className="muted small" data-testid="prediction-label">
-        {PREDICTION_LABEL}
-      </p>
-    </section>
-  );
-}
-
-export function App() {
+export function App({
+  controller,
+  events,
+}: {
+  controller: AppController | Error | undefined;
+  events: { subscribe(fn: () => void): () => void; snapshot(): Event[] };
+}) {
   const online = useOnline();
   const { canInstall, installed, install } = useInstallPrompt();
   const requirements = useMemo(detectRequirements, []);
   const swState = useServiceWorkerState();
   const baseUrl = useMemo(() => new URL(import.meta.env.BASE_URL, location.href).href, []);
-  const log = useMemo(() => new EventLog(200), []);
-  const [events, setEvents] = useState<Event[]>([]);
-  const [result, setResult] = useState<PipelineResult | null>(null);
-  const [running, setRunning] = useState(false);
-  const [question, setQuestion] = useState('What is this document about?');
+  const [log, setLog] = useState<Event[]>([]);
+  useEffect(() => events.subscribe(() => setLog(events.snapshot())), [events]);
 
-  useEffect(() => log.subscribe(() => setEvents(log.snapshot())), [log]);
-
-  const run = async () => {
-    setRunning(true);
-    try {
-      const r = await runPipeline(
-        { file: syntheticBlob(), fileName: 'synthetic.pdf', question },
-        { events: log },
-      );
-      setResult(r);
-    } finally {
-      setRunning(false);
-    }
-  };
+  if (window.top !== window.self) return <Framed />;
 
   return (
     <div className="app">
@@ -268,11 +167,14 @@ export function App() {
         <div>
           <h1>dockit demo</h1>
           <p className="tagline">
-            Everything runs in this tab. Nothing is uploaded; the only network requests are for this
-            page's own files.
+            Ask a question about a PDF. Everything runs in this tab: the file is never uploaded, and
+            after the one-time model download no request leaves the page.
           </p>
           <p className="build" data-testid="build-line">
-            Built from main at <code>{BUILD_SHA}</code> by <code>.github/workflows/pages.yml</code>
+            {BUILD_ID}
+            {__DOCKIT_STUB__
+              ? ' (stub build: the sibling builds are not included; never deployed)'
+              : ''}
           </p>
         </div>
         <div className="badges" aria-live="polite">
@@ -294,70 +196,19 @@ export function App() {
 
       <StatusLine />
 
-      <div className="banner" role="status" data-testid="placeholder-banner">
-        Document processing is not built yet. Every pipeline stage below returns a labelled stub;
-        what works today is the installable shell, its hash-verified offline cache and the offline
-        page. The real pipeline (page triage, extraction, glyph gate, local store, local model) is
-        Sprint 5.
-      </div>
+      {controller === undefined ? (
+        <p className="muted" data-testid="starting">
+          Starting...
+        </p>
+      ) : controller instanceof Error ? (
+        <div className="box box-warn" role="alert" data-testid="startup-error">
+          <p>dockit could not start: {controller.message}</p>
+        </div>
+      ) : (
+        <Live controller={controller} online={online} />
+      )}
 
       <main className="grid">
-        <section className="card card-wide">
-          <h2>Pipeline</h2>
-          <div className="table-wrap">
-            <table className="table pipeline" data-testid="pipeline">
-              <thead>
-                <tr>
-                  <th>Stage</th>
-                  <th>Status</th>
-                  <th>Lands in</th>
-                </tr>
-              </thead>
-              <tbody>
-                {STAGE_ORDER.map((stage) => {
-                  const rec = result?.stages.find((s) => s.stage === stage);
-                  return (
-                    <tr key={stage} data-testid={`stage-${stage}`}>
-                      <td className="stage-title">{STAGE_LABELS[stage].title}</td>
-                      <td data-testid={`status-${stage}`}>
-                        {STAGE_STATUS}
-                        {rec ? (
-                          <span className="muted">
-                            {' '}
-                            ; stub ran in {rec.durationMs.toFixed(2)} ms
-                          </span>
-                        ) : null}
-                      </td>
-                      <td>{STAGE_LABELS[stage].landsIn}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <label className="field">
-            <span>Question</span>
-            <input
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              maxLength={200}
-              autoComplete="off"
-            />
-          </label>
-          <button type="button" onClick={() => void run()} disabled={running} data-testid="run">
-            {running
-              ? 'Running placeholder pipeline'
-              : 'Run placeholder pipeline on synthetic bytes'}
-          </button>
-          {result ? (
-            <p className="answer" data-testid="answer">
-              {result.answer.answer}
-            </p>
-          ) : null}
-        </section>
-
-        <ModelPlanCard />
-
         <section id="requirements" className="card box" data-testid="requirements">
           <h2>Browser requirements</h2>
           <ul className="reqs">
@@ -374,8 +225,9 @@ export function App() {
           </ul>
           <p className="muted small" data-testid="shared-origin">
             All Airplane Mode Labs demos share one browser origin (airplanemode-labs.github.io):
-            storage, quota, estimate() and persist() are shared between them. This demo writes only
-            under the dockit-precache-* cache.
+            storage, quota, estimate() and persist() are shared between them. The models are held in
+            the shared airplanemode-runtime store; documents stay in memory unless you choose to
+            keep one.
           </p>
         </section>
 
@@ -383,32 +235,36 @@ export function App() {
           <h2>What this demo does not do yet</h2>
           <ul>
             <li>
-              No document processing at all: every stage is a labelled stub. The real pipeline (page
-              triage, extraction, glyph gate, local store, model answer) lands in Sprint 5.
+              Text-layer PDFs only. OCR is not yet supported: a scanned PDF is refused, and
+              image-only pages are skipped.
             </li>
             <li>
-              No model and no inference: nothing is downloaded or loaded and the answer stage echoes
-              a MockAdapter. The planned-model card above is a plan plus a feature-detection
-              prediction only; dockit wires a local model in Sprint 5.
+              The model is Qwen3-0.6B, a small demo model. It is not the pilot model (Qwen3-1.7B,
+              hosted by the customer), and its answers can be wrong: check the source pages.
             </li>
             <li>
-              The capability profile card is not wired: runtime's detectCapabilities() is not called
-              here yet (Sprint 5).
+              Single-threaded WebAssembly: answers take seconds. Not measured on an 8 GB Windows
+              laptop; the figures on the benchmarks page are from an Apple M5 Pro with 48 GB, and
+              every one says not measured on 8 GB.
             </li>
             <li>
-              No OPFS storage and no vector index: the store stage writes to memory only, and its
-              query() and putVectors() report not_implemented. localdata&apos;s vector index is
-              Sprint 4 work in a different repository; dockit wires it in Sprint 5.
+              No Hindi or other Indic answer quality claim: the glyph gate is tested on Devanagari
+              text, but answers over Hindi documents are not evaluated.
             </li>
-            <li data-testid="chain-not-yet">
-              The chain in the card above is runtime&apos;s, not dockit&apos;s: runtime
-              0.2.0-alpha.1 runs its engine in a worker. Not yet: {WEBLLM_NOT_YET}. dockit itself
-              loads no model until Sprint 5.
+            <li>
+              No real signing key: the model list is signed by a key that exists only inside the
+              build that made this page, which proves the files and the list came from the same
+              build, not who published them.
+            </li>
+            <li>
+              No WebLLM (cut), no multi-document chat. The live page changes only after the owner
+              pushes.
             </li>
             <li data-testid="tt-status">
-              Trusted Types is on for scripts (require-trusted-types-for 'script', one policy named
-              dockit-sw, which only the service worker registration uses). The CSP comes from a meta
-              tag because GitHub Pages cannot send headers, so frame-ancestors is not set.
+              Trusted Types is on for scripts (require-trusted-types-for 'script'; policies
+              dockit-sw, airplanemode-worker, dockit-workers). The CSP comes from a meta tag because
+              GitHub Pages cannot send headers, so frame-ancestors is not set; a framed copy shows
+              only a link to open dockit directly.
             </li>
           </ul>
         </section>
@@ -426,38 +282,19 @@ export function App() {
             <dd data-testid="sw-controller">{swState.controller}</dd>
           </dl>
           <p className="muted small">
-            The worker precaches the shell after verifying every file's SHA-256 and deletes only its
-            own stale <code>dockit-precache-*</code> caches on activate.
+            The worker precaches the shell, the WASM files and the pdf.js assets after verifying
+            every file's SHA-256, never sees a document, and lets the model files pass through to
+            the browser's verified store.
           </p>
-        </section>
-
-        <section className="card">
-          <h2>Capability profile</h2>
-          <p className="muted">
-            Not measured. <code>detectCapabilities()</code> from <code>@airplanemode/runtime</code>{' '}
-            is not called in this build; dockit will show gpu, ramGb, storageFreeGb, cores and
-            backendTier here.
-          </p>
-          <dl className="kv">
-            <dt>gpu</dt>
-            <dd>unknown</dd>
-            <dt>ramGb</dt>
-            <dd>unknown</dd>
-            <dt>storageFreeGb</dt>
-            <dd>unknown</dd>
-            <dt>cores</dt>
-            <dd>unknown</dd>
-            <dt>backendTier</dt>
-            <dd>unknown</dd>
-          </dl>
         </section>
 
         <section className="card card-wide">
           <h2>Events</h2>
           <p className="muted">
-            In-memory ring buffer following Event 0.1. Nothing leaves this page.
+            In-memory ring buffer following Event 0.1. Counts, timings and enums only: never a file
+            name, text, question or answer. Nothing leaves this page.
           </p>
-          {events.length === 0 ? (
+          {log.length === 0 ? (
             <p className="muted">No events yet.</p>
           ) : (
             <div className="table-wrap">
@@ -472,7 +309,7 @@ export function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {events.map((e) => (
+                  {log.slice(-60).map((e) => (
                     <tr key={e.id}>
                       <td>{e.name}</td>
                       <td>{e.kind}</td>
@@ -499,10 +336,49 @@ export function App() {
           · <a href="./THIRD-PARTY-NOTICES.txt">Third-party notices</a>
         </p>
         <p>
-          This app makes no network requests other than the asset and manifest URLs you pass it, and
-          sends no telemetry.
+          After the one-time model download this app makes no network requests, and it sends no
+          telemetry.
         </p>
       </footer>
     </div>
+  );
+}
+
+/** The live part of the page: model, capability, document and question, all driven by the controller. */
+function Live({ controller, online }: { controller: AppController; online: boolean }) {
+  const state = useSyncExternalStore(controller.subscribe, controller.getState);
+  useEffect(() => {
+    controller.setOnline(online);
+  }, [controller, online]);
+  // Ask stays disabled while the model is being loaded, which includes the re-load after a Stop (the model card says 'Loading the model again')
+  const ready =
+    state.doc.status === 'ready' &&
+    state.doc.info !== undefined &&
+    state.doc.info.chunks > 0 &&
+    state.model.status !== 'loading';
+  return (
+    <main className="grid" data-testid="live">
+      <ModelCard
+        model={state.model}
+        online={online}
+        onDownload={() => void controller.download()}
+      />
+      <CapabilityCard capability={state.capability} />
+      <DocumentCard
+        doc={state.doc}
+        kept={state.kept}
+        onFile={(f) => void controller.openFile(f)}
+        onKeep={(k) => controller.setKeep(k)}
+        onDelete={() => void controller.remove()}
+        onUseKept={(id) => void controller.useKept(id)}
+        onDeleteKept={(id) => void controller.removeKept(id)}
+      />
+      <AskCard
+        ask={state.ask}
+        ready={ready}
+        onAsk={(q) => void controller.ask(q)}
+        onStop={() => controller.stop()}
+      />
+    </main>
   );
 }

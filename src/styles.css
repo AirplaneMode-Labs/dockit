@@ -267,3 +267,29 @@ button:disabled {
   margin: 1rem 0 0.4rem;
   font-size: 1rem;
 }
+
+/* Sprint 5: the real flow */
+.answer-text {
+  white-space: pre-wrap;
+  unicode-bidi: plaintext;
+  overflow-wrap: anywhere;
+}
+.drop {
+  border: 2px dashed var(--border, #8884);
+  border-radius: 8px;
+  padding: 1rem;
+  text-align: center;
+}
+.drop-over {
+  background: var(--accent-soft, #8882);
+}
+.check {
+  display: block;
+  margin: 0.75rem 0;
+}
+.refusal p {
+  margin: 0.25rem 0;
+}
+progress {
+  width: 100%;
+}
