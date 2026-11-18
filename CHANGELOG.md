@@ -58,6 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   indexed; a document in which no passage could be embedded or stored still fails with the first error. Systemic failures (integrity, profile, abort) still stop the document. (D5-FIX1-09)
 - The README and the benchmark page say what "requests after offline = 0" counts (application requests from the page, its workers and its service worker; the browser's own
   check of `/dockit/sw.js` and the favicon fetch are not in it), and the by-hand PowerShell memory sampler hands its loop to the child in single quotes. (D5-FIX1-07, D5-FIX1-10)
+- `docs/benchmarks/e2e.csv` and `e2e-questions.csv` re-measured with `npm run bench:e2e` on commit `0282d19da192`, built from a fresh clone at the locked sibling
+  commits as `pages.yml` builds it, so the commit column is a clean SHA (it read `4bc19e9ae858-dirty`); the README table is regenerated from them. The commit that
+  adds them changes no code. Apple M5 Pro 48 GB, not measured on 8 GB.
 
 ### Security
 

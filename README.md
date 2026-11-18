@@ -125,7 +125,9 @@ The page has a box titled "What this demo does not do yet". It shows a build id:
 
 ## Benchmarks
 
-Every row names its machine, the command and the commit. Peak memory is the peak summed resident size of the test Chrome's process tree; the JS heap
+Every row names its machine, the command and the commit. The commit column is the code commit that was measured, built from a fresh clone as
+`pages.yml` builds it; the commit that adds the CSVs and regenerates this table follows it and changes no code (as for localdata's
+vector-index CSV). Peak memory is the peak summed resident size of the test Chrome's process tree; the JS heap
 and the workers' WebAssembly memory are different figures under their own names. **Not measured on 8 GB**: the last column says so in every row, and so does the `laptop_8gb` column of both CSVs.
 
 **Requests after offline = 0 counts application requests:** the ones made by the page, its workers and its service worker (a Chrome DevTools
@@ -136,8 +138,8 @@ those two requests, and dockit's code makes neither of them.
 <!-- bench:start -->
 | Machine | Run kind | Runs | Time to first token, ms (median / worst) | Total, ms (median / worst) | Peak memory: Chrome process tree (median / worst) | JS heap peak (median / worst) | Worker WebAssembly memory peak (median / worst) | Requests after offline | Command | Commit | 8 GB laptop |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| Apple M5 Pro 48 GB | one session | 5 | 7,763 / 7,898 | 9,337 / 9,497 | 6,535 MiB / 6,628 MiB | 11 MiB / 37 MiB | 2,574 MiB / 2,574 MiB | 0 | `npm run bench:e2e` | `4bc19e9ae858-dirty` | not measured on 8 GB |
-| Apple M5 Pro 48 GB | after a Chrome restart | 1 | 7,892 / 7,892 | 9,490 / 9,490 | 6,410 MiB / 6,410 MiB | 34 MiB / 34 MiB | 2,574 MiB / 2,574 MiB | 0 | `npm run bench:e2e` | `4bc19e9ae858-dirty` | not measured on 8 GB |
+| Apple M5 Pro 48 GB | one session | 5 | 7,731 / 7,861 | 9,280 / 9,435 | 6,283 MiB / 6,377 MiB | 11 MiB / 31 MiB | 2,574 MiB / 2,574 MiB | 0 | `npm run bench:e2e` | `0282d19da192` | not measured on 8 GB |
+| Apple M5 Pro 48 GB | after a Chrome restart | 1 | 7,861 / 7,861 | 9,440 / 9,440 | 6,147 MiB / 6,147 MiB | 33 MiB / 33 MiB | 2,574 MiB / 2,574 MiB | 0 | `npm run bench:e2e` | `0282d19da192` | not measured on 8 GB |
 
 Question set (seven fixed questions over a synthetic three-page policy, results not selected): 4 of 6 correct with the correct source page on the first run; 24 of 36 over all 6 runs; the question with no answer was refused in 6 of 6 runs.
 
