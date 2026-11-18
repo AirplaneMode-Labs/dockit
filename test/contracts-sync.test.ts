@@ -20,23 +20,23 @@ const contractsDir = join(root, 'src', 'contracts');
 const siblingPresent = existsSync(specDir);
 
 describe('vendored contracts', () => {
-  it('uses the per-file version map for spec release 0.4.0 and vendors six files', () => {
-    // Release 0.4.0 (2026-11-14, untagged): manifest 0.1.1 is "manifest spec v0.1" (published); the others are draft.
+  it('uses the per-file version map for spec release 0.5.0 and vendors six files', () => {
+    // Release 0.5.0 (2026-11-18, untagged): manifest 0.1.2 is "manifest spec v0.1" (published, additive patch); the others are draft.
     expect(CONTRACT_VERSIONS).toEqual({
-      'manifest.ts': '0.1.1',
+      'manifest.ts': '0.1.2',
       'capability-profile.ts': '0.1.0',
-      'event.ts': '0.1.3',
-      'storage-api.ts': '0.2.0',
-      'backend-adapter.ts': '0.3.1',
+      'event.ts': '0.1.4',
+      'storage-api.ts': '0.3.0',
+      'backend-adapter.ts': '0.4.0',
       'model-descriptor.ts': '0.2.1',
     });
     expect(CONTRACT_FILES).toHaveLength(6);
     expect(header('event.ts')).toBe(
-      '// Vendored from AirplaneMode-Labs/runtime spec/event.ts @ 0.1.3; source of truth is runtime/spec; do not edit here\n',
+      '// Vendored from AirplaneMode-Labs/runtime spec/event.ts @ 0.1.4; source of truth is runtime/spec; do not edit here\n',
     );
-    expect(header('manifest.ts')).toContain('@ 0.1.1;');
-    expect(header('storage-api.ts')).toContain('@ 0.2.0;');
-    expect(header('backend-adapter.ts')).toContain('@ 0.3.1;');
+    expect(header('manifest.ts')).toContain('@ 0.1.2;');
+    expect(header('storage-api.ts')).toContain('@ 0.3.0;');
+    expect(header('backend-adapter.ts')).toContain('@ 0.4.0;');
     expect(header('model-descriptor.ts')).toContain('@ 0.2.1;');
     expect(() => header('unknown.ts')).toThrow(/no version/);
   });

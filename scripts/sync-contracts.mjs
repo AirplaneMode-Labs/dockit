@@ -16,14 +16,14 @@ export const DEFAULT_SPEC_DIR = join(root, '..', 'runtime', 'spec');
 // <workspace>/evidence/sprint-<n>/D1/SPEC-LANDED.txt that exists (the committed copy). No scratch path is baked in.
 export const DEFAULT_OUT_DIR = join(root, 'src', 'contracts');
 
-// Each contract carries its own version (spec release 0.4.0, 2026-11-14, untagged): the header names that
-// contract's version, not the release's. Manifest 0.1.1 is "manifest spec v0.1" (published); the rest are draft.
+// Each contract carries its own version (spec release 0.5.0, 2026-11-18, untagged): the header names that
+// contract's version, not the release's. Manifest 0.1.2 is "manifest spec v0.1" (published, additive patch); the rest are draft.
 export const CONTRACT_VERSIONS = {
-  'manifest.ts': '0.1.1',
+  'manifest.ts': '0.1.2',
   'capability-profile.ts': '0.1.0',
-  'event.ts': '0.1.3',
-  'storage-api.ts': '0.2.0',
-  'backend-adapter.ts': '0.3.1',
+  'event.ts': '0.1.4',
+  'storage-api.ts': '0.3.0',
+  'backend-adapter.ts': '0.4.0',
   'model-descriptor.ts': '0.2.1',
 };
 export const CONTRACT_FILES = Object.keys(CONTRACT_VERSIONS);
