@@ -1,6 +1,9 @@
 name: pages
 
-# Builds the demo and deploys it to GitHub Pages at https://airplanemode-labs.github.io/dockit/.
+# Builds the demo from the four sibling repositories at the exact commits in deps.lock.json and deploys it to
+# GitHub Pages at https://airplanemode-labs.github.io/dockit/. Nothing built is committed. The model bundle is
+# signed by a key that exists only inside this job (the public half is compiled into the pages). The first
+# deploy is the only real check of the Pages size and deploy-timeout limits.
 on:
   push:
     branches: [main]
@@ -27,16 +30,80 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The sibling refs come from the committed deps.lock.json only; no input or variable can change them.
+      - name: Read the locked sibling commits
+        id: lock
+        run: |
+          node -e '
+            const lock = JSON.parse(require("node:fs").readFileSync("deps.lock.json", "utf8"));
+            for (const dep of ["runtime", "localdata", "pagetriage", "glyphsift"]) {
+              const c = lock.deps[dep].commit;
+              if (!/^[0-9a-f]{40}$/.test(c)) { console.error(dep + ": not a 40-hex commit"); process.exit(1); }
+              console.log(dep + "=" + c);
+            }
+          ' >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AirplaneMode-Labs/runtime
+          ref: ${{ steps.lock.outputs.runtime }}
+          path: deps/runtime
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AirplaneMode-Labs/localdata
+          ref: ${{ steps.lock.outputs.localdata }}
+          path: deps/localdata
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AirplaneMode-Labs/pagetriage
+          ref: ${{ steps.lock.outputs.pagetriage }}
+          path: deps/pagetriage
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AirplaneMode-Labs/glyphsift
+          ref: ${{ steps.lock.outputs.glyphsift }}
+          path: deps/glyphsift
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      # Same command as the `ci` npm script run by ci.yml, so a demo that fails to build fails CI.
+      - run: npm ci --ignore-scripts
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: '1.98'
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            deps/pagetriage
+            deps/glyphsift
+      # wasm-bindgen and wasm-opt come only from these two scripts (sha256-pinned release binaries).
+      - name: Install the pinned WASM tools (pagetriage)
+        run: bash deps/pagetriage/scripts/install-wasm-tools.sh
+      - name: Install the pinned WASM tools (glyphsift)
+        run: bash deps/glyphsift/scripts/install-wasm-tools.sh
+      - name: Restore the model cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: deps/runtime/.cache/models
+          key: models-${{ hashFiles('deps.lock.json') }}
+      # runtime's model fetcher (run by assemble-deps for both models) is https only, sends no token and re-hashes every cached file after the restore
+      - name: Assemble the four sibling builds and the signed model bundle
+        run: node scripts/assemble-deps.mjs --checkouts deps
       # VITE_BUILD_SHA feeds the "Built from main at <sha>" line on the page.
       - run: npm run build
         env:
           VITE_BUILD_SHA: ${{ github.sha }}
+      # GitHub documents a 1 GB limit for a Pages site; the guard uses that figure (1,000,000,000 bytes), not 1 GiB.
+      - name: Record the size of the built demo and refuse a build over 1 GB
+        run: |
+          find dist -type f -size +1024k -printf '%10s  %p\n' | sort -k2 | tee dist-files.txt
+          bytes=$(du -sk dist | awk '{print $1 * 1024}')
+          echo "dist total: $bytes bytes"
+          if [ "$bytes" -gt 1000000000 ]; then echo "dist is over 1 GB ($bytes bytes)" >&2; exit 1; fi
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

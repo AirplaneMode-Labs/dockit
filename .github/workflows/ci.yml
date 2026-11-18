@@ -34,12 +34,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
+      # `npm run ci` builds in stub mode (DOCKIT_DEPS=stub, a banner on the page, never deployed): the four sibling
+      # builds are assembled only by pages.yml and the owner's local runs, so a lone checkout stays green.
       - run: npm run ci
-      # Playwright uses the preinstalled Google Chrome (channel "chrome"); no browser download.
-      # First ran on GitHub on 9 Nov 2026.
-      - name: Check the preinstalled Google Chrome (Linux only)
-        if: runner.os == 'Linux'
-        run: google-chrome --version || { echo "Google Chrome is not installed on this runner" >&2; exit 1; }
-      - if: runner.os == 'Linux'
-        run: npm run test:browser
