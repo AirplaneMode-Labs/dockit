@@ -28,7 +28,14 @@ export interface RouteContext {
 }
 
 export type PassThroughReason =
-  'non-get' | 'cross-origin' | 'range' | 'assets-path' | 'manifest-json' | 'not-precached';
+  | 'non-get'
+  | 'non-http'
+  | 'cross-origin'
+  | 'range'
+  | 'assets-path'
+  | 'models-path'
+  | 'manifest-json'
+  | 'not-precached';
 
 export type Route =
   | { action: 'pass-through'; reason: PassThroughReason }
@@ -117,6 +124,11 @@ function offlineUrl(ctx: RouteContext): string {
   return `${ctx.origin}${ctx.scopePath}offline.html`;
 }
 
+/** <scope>models/: the signed model bundle. Its files go to the browser's verified store, never to this worker's cache. */
+function isModelsPath(pathname: string, scopePath: string): boolean {
+  return pathname.startsWith(scopePath) && pathname.slice(scopePath.length).startsWith('models/');
+}
+
 function isAssetsPath(pathname: string, scopePath: string): boolean {
   if (pathname.startsWith('/assets/')) return true;
   return pathname.startsWith(scopePath) && pathname.slice(scopePath.length).startsWith('assets/');
@@ -133,8 +145,9 @@ export function onVerifyFailure(
 
 /**
  * Decides what the fetch handler does. The order of the checks is part of the contract:
- * non-GET, cross-origin, Range, /assets/, manifest.json are pass-through (the worker returns
- * without calling respondWith); then navigations are network-first; then `offline.css`
+ * non-GET, a non-http(s) scheme, cross-origin, Range, /assets/, <scope>models/, manifest.json are pass-through (the worker returns
+ * without calling respondWith); then navigations to the shell or a precached file are cache-first and other navigations network-first with
+ * the offline page as the fallback; then `offline.css`
  * requested from any depth under the scope is answered by the precached scope-level copy (the
  * offline fallback page links `./offline.css` relative to whatever deep path was navigated to);
  * then precached URLs are cache-first; everything else passes through.
@@ -143,6 +156,10 @@ export function decideRoute(req: RouteRequest, ctx: RouteContext): Route {
   if (req.method.toUpperCase() !== 'GET') return { action: 'pass-through', reason: 'non-get' };
 
   const url = new URL(req.url);
+  // blob:, data:, file: and filesystem: are never handled: a document the user chose reaches the page as a Blob, and a
+  // blob: URL that names the page origin ('blob:https://host/uuid' has origin https://host) must not be mistaken for a same-origin file.
+  if (url.protocol !== 'http:' && url.protocol !== 'https:')
+    return { action: 'pass-through', reason: 'non-http' };
   if (url.origin !== ctx.origin) return { action: 'pass-through', reason: 'cross-origin' };
   if (req.hasRange) return { action: 'pass-through', reason: 'range' };
   if (isAssetsPath(url.pathname, ctx.scopePath)) {
@@ -151,28 +168,20 @@ export function decideRoute(req: RouteRequest, ctx: RouteContext): Route {
   if (url.pathname.endsWith('/manifest.json')) {
     return { action: 'pass-through', reason: 'manifest-json' };
   }
+  if (isModelsPath(url.pathname, ctx.scopePath)) {
+    return { action: 'pass-through', reason: 'models-path' };
+  }
 
   const key = normaliseKey(req.url);
   if (req.mode === 'navigate') {
     const shell = shellUrl(ctx);
     const isShell = key === `${ctx.origin}${ctx.scopePath}` || key === shell;
-    // A navigation to another precached file (for example the third-party notices) falls back to
-    // that file's own verified cache entry, not to offline.html.
-    if (!isShell && ctx.precached.has(key)) {
-      return {
-        action: 'network-first',
-        fallback: 'cached',
-        cached: key,
-        shell,
-        offline: offlineUrl(ctx),
-      };
-    }
-    return {
-      action: 'network-first',
-      fallback: isShell ? 'shell' : 'offline',
-      shell,
-      offline: offlineUrl(ctx),
-    };
+    // The shell and every other precached file are served from the verified precache, never from the network first: the app starts
+    // offline without attempting a request, and a new build reaches the user through the service worker update (new build hash).
+    if (isShell) return { action: 'cache-first', key: shell };
+    if (ctx.precached.has(key)) return { action: 'cache-first', key };
+    // anything else under the scope: the network, with the offline page as the fallback
+    return { action: 'network-first', fallback: 'offline', shell, offline: offlineUrl(ctx) };
   }
   if (url.pathname.startsWith(ctx.scopePath) && url.pathname.endsWith('/offline.css')) {
     return { action: 'cache-first', key: `${ctx.origin}${ctx.scopePath}offline.css` };

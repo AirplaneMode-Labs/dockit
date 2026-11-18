@@ -6,3 +6,10 @@ test-results/
 public/icons/
 LICENSE
 src/contracts/
+vendor/
+public/models/
+public/app/ort/
+src/generated/
+/deps/
+.cache/
+test/fixtures/pdf/

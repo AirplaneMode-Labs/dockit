@@ -1,8 +1,11 @@
 /**
- * Trusted Types for the one script sink dockit has: navigator.serviceWorker.register().
- * The CSP (index.html) says `require-trusted-types-for 'script'; trusted-types dockit-sw`: exactly
- * one named policy, no 'allow-duplicates', no default policy. The policy accepts a single value,
- * the absolute URL of ./sw.js resolved against the document base, and throws on anything else.
+ * Trusted Types in dockit. The CSP (index.html) says `require-trusted-types-for 'script'; trusted-types dockit-sw
+ * airplanemode-worker dockit-workers`: three named policies, no 'allow-duplicates', no default policy.
+ *  - dockit-sw (this file): the one policy for navigator.serviceWorker.register(). It accepts a single value, the
+ *    absolute URL of ./sw.js resolved against the document base, and throws on anything else.
+ *  - airplanemode-worker: runtime's startModuleWorker policy for the blob bootstrap of the engine worker (runtime owns it).
+ *  - dockit-workers: the policy of dockit's own pdf and analysis workers (src/workers/start.ts, through the same
+ *    startModuleWorker).
  * Where Trusted Types is unsupported the plain string is used (the CSP directive is then ignored).
  */
 
@@ -35,4 +38,21 @@ export function swScriptUrl(tt: TrustedTypesLike | undefined, baseURI: string): 
     policies.set(tt, policy);
   }
   return policy.createScriptURL(expected);
+}
+
+/** What navigator.serviceWorker offers that dockit uses. */
+export interface ServiceWorkerContainerLike {
+  register(scriptURL: string, options?: { scope?: string }): Promise<unknown>;
+}
+
+/**
+ * Registers ./sw.js with the scope of the document base directory: '/dockit/' on GitHub Pages, never wider. The registration
+ * itself is the one use of the 'dockit-sw' Trusted Types policy.
+ */
+export function registerServiceWorker(
+  container: ServiceWorkerContainerLike,
+  tt: TrustedTypesLike | undefined,
+  baseURI: string,
+): Promise<unknown> {
+  return container.register(swScriptUrl(tt, baseURI), { scope: new URL('./', baseURI).pathname });
 }

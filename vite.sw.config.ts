@@ -8,7 +8,7 @@ export default defineConfig({
   publicDir: false,
   build: {
     target: 'es2022',
-    outDir: 'dist',
+    outDir: process.env['DOCKIT_OUT_DIR'] ?? 'dist',
     emptyOutDir: false,
     minify: false,
     sourcemap: false,

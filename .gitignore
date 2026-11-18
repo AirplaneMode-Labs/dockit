@@ -19,3 +19,13 @@ coverage/
 # browser test caches and local scratch
 .playwright/
 .scratch/
+
+# sibling builds assembled by scripts/assemble-deps.mjs (TD-40): never committed
+vendor/
+public/models/
+public/app/ort/
+src/generated/
+.cache/
+
+# pages.yml checks the sibling repositories out here
+/deps/

@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "deps": {
+    "runtime": {
+      "repo": "AirplaneMode-Labs/runtime",
+      "commit": "3bf53c6f801c2da928dcae69e087221fb757ecd4"
+    },
+    "localdata": {
+      "repo": "AirplaneMode-Labs/localdata",
+      "commit": "39d59a01aa49d4e66a38b0828c0d8b2d622ee76d"
+    },
+    "pagetriage": {
+      "repo": "AirplaneMode-Labs/pagetriage",
+      "commit": "b290cc84c08d9874d5d6d569e7a2bf7e0acfc0df"
+    },
+    "glyphsift": {
+      "repo": "AirplaneMode-Labs/glyphsift",
+      "commit": "5ff0c47ec1fcb0b8d1c80f0029aa89ab78e03d2e"
+    }
+  }
+}

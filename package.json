@@ -1,8 +1,8 @@
 {
   "name": "@airplanemode/dockit",
-  "version": "0.1.0-dev",
+  "version": "0.2.0-dev",
   "private": true,
-  "description": "Offline document intelligence kit: installable PWA skeleton for offline PDF question answering (no document processing yet).",
+  "description": "Offline document intelligence kit: an installable PWA that answers a question over a PDF with a small local model, in the browser, with no request after the models are cached.",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
@@ -26,9 +26,18 @@
     "fmt": "prettier --write .",
     "fmt:check": "prettier --check .",
     "deps:scripts": "npm query ':attr(scripts,[postinstall]),:attr(scripts,[preinstall])'",
-    "ci": "npm run fmt:check && npm run typecheck && npm run test && npm run build"
+    "ci": "npm run fmt:check && npm run typecheck && npm run test && npm run build:check",
+    "build:check": "node scripts/build-check.mjs",
+    "assemble": "node scripts/assemble-deps.mjs --siblings .. --allow-dirty",
+    "test:e2e": "playwright test -c playwright.e2e.config.ts test/e2e.spec.ts",
+    "test:gate": "playwright test -c playwright.e2e.config.ts test/gate.spec.ts",
+    "bench:e2e": "node scripts/bench-e2e.mjs",
+    "fixtures": "node scripts/make-fixture-pdfs.mjs",
+    "fixtures:check": "node scripts/make-fixture-pdfs.mjs --check"
   },
   "dependencies": {
+    "@huggingface/transformers": "4.3.1",
+    "pdfjs-dist": "6.5.438",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
@@ -42,5 +51,12 @@
     "typescript": "5.9.3",
     "vite": "7.3.7",
     "vitest": "4.1.12"
+  },
+  "overrides": {
+    "global-agent": "4.1.6",
+    "semver": "7.8.5",
+    "tslib": "2.8.1",
+    "@huggingface/jinja": "0.5.10",
+    "onnxruntime-web": "1.31.1"
   }
 }

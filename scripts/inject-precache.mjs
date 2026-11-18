@@ -15,12 +15,12 @@ import {
   unlinkSync,
   existsSync,
 } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
-const dist = join(root, 'dist');
+const dist = process.env.DOCKIT_OUT_DIR ? resolve(process.env.DOCKIT_OUT_DIR) : join(root, 'dist');
 const template = join(root, 'public', 'sw.js');
 const logicBundle = join(dist, 'sw-logic.iife.js');
 const viteManifest = join(dist, '.vite', 'manifest.json');
@@ -47,6 +47,10 @@ function walk(dir, acc = []) {
     const full = join(dir, name);
     const rel = relative(dist, full).split(sep).join('/');
     if (rel === '.vite' || rel.startsWith('.vite/')) continue;
+    // The signed model bundle is fetched into the browser's verified store (runtime AssetManager), never into this cache, and the
+    // ORT wasm binary is one of its entries (verified inside the engine worker). The ORT .mjs factory stays: it is a script.
+    if (rel === 'models' || rel.startsWith('models/')) continue;
+    if (rel.startsWith('app/ort/') && rel.endsWith('.wasm')) continue;
     if (statSync(full).isDirectory()) walk(full, acc);
     else if (!EXCLUDE.has(rel)) acc.push(rel);
   }
