@@ -70,6 +70,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Post-push CI fix (18 Nov 2026): `npm run ci` failed on windows-latest only, on two tests. (1) `assemble-deps.test.ts` expected `depDir('siblings', '/w', 'runtime')` to
+  equal `join('/w', 'runtime')`, but `depDir` makes the folder absolute and on Windows that adds the drive (`D:\w\runtime`); the expectation now resolves the same way, and
+  `depDir` takes the path module as an optional fourth argument so `path.win32` and `path.posix` cases (drive-less, own drive, forward slashes, UNC, relative `..`) run on any
+  host. (2) the pdf.js fixture tests timed out at the 5 000 ms default on a cold runner (5 673 ms there, 115 ms locally); they, and the scratch-git assembler tests that
+  sat at 36 % of the default, now carry explicit 30 s timeouts with the measurements in `test/helpers/timeouts.ts`, and the 3 s guard on opening a document is 20 s.
 - A model load that failed with the engine code `backend` right after the download finished is retried once after 1.5 s (Chrome 157 does not always let the engine read a file written less than a second earlier; the cause is open). `download()` and `load()` turn a failed manifest fetch into the documented refusals (`model_not_cached`, or the stored manifest's own `manifest_refused`) instead of an unexplained error. (D5-06)
 - The pdf and analysis workers are really terminated: `startModuleWorker`'s `terminate()` is called through a wrapper, not through an override of the Worker's own `terminate`, which had made the native terminate unreachable. (D5-05)
 

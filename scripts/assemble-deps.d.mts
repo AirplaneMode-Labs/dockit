@@ -7,7 +7,15 @@ export class AssembleError extends Error {
 }
 export function parseLock(lock: unknown): any;
 export function parseArgs(argv: string[]): { mode: string; dir: string; allowDirty: boolean };
-export function depDir(mode: string, dir: string, dep: string): string;
+export function depDir(
+  mode: string,
+  dir: string,
+  dep: string,
+  pathApi?: {
+    join: (...segments: string[]) => string;
+    resolve: (...segments: string[]) => string;
+  },
+): string;
 export function buildPlan(opts?: { dockitRoot?: string }): any;
 export function defaultExec(
   cwd: string,

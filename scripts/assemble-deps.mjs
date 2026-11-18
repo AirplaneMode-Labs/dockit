@@ -79,7 +79,13 @@ export function parseArgs(argv) {
   return { mode, dir, allowDirty };
 }
 
-export const depDir = (mode, dir, dep) => join(resolve(dir), dep);
+/**
+ * Where a dependency's clone or checkout lives: <dir>/<dep> in both modes. <dir> is made absolute first (--siblings .. is relative to the
+ * cwd), which on Windows adds the current drive. `pathApi` is the platform's join and resolve; the tests pass path.win32 or path.posix
+ * (pinned to a working directory) so both sets of rules run on any host.
+ */
+export const depDir = (mode, dir, dep, pathApi = { join, resolve }) =>
+  pathApi.join(pathApi.resolve(dir), dep);
 
 /**
  * What to run in each dependency and what to take from it. runtime's last step also writes the model bundle
