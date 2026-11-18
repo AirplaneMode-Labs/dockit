@@ -7,6 +7,7 @@ import {
   noiseDevanagari,
   POLICY_3P_PAGES,
 } from '../scripts/make-fixture-pdfs.mjs';
+import { PDFJS_OPEN_GUARD_MS, PDFJS_TEST_TIMEOUT_MS } from './helpers/timeouts.ts';
 
 const dir = join(import.meta.dirname, 'fixtures', 'pdf');
 const questions = JSON.parse(
@@ -39,7 +40,7 @@ async function textOf(name: string): Promise<{ pages: string[]; encrypted: boole
   };
   const doc = await Promise.race([
     task.promise,
-    new Promise<null>((r) => setTimeout(() => r(null), 3000)),
+    new Promise<null>((r) => setTimeout(() => r(null), PDFJS_OPEN_GUARD_MS)),
   ]).catch(() => null);
   if (!doc) return { pages: [], encrypted };
   const pages: string[] = [];
@@ -95,7 +96,7 @@ describe('fixture PDFs: generated, deterministic, small', () => {
   });
 });
 
-describe('fixture PDFs: what pdf.js reads from them', () => {
+describe('fixture PDFs: what pdf.js reads from them', { timeout: PDFJS_TEST_TIMEOUT_MS }, () => {
   it('policy-3p.pdf has three pages and page 2 holds the grace-period sentence', async () => {
     const { pages } = await textOf('policy-3p.pdf');
     expect(pages).toHaveLength(3);

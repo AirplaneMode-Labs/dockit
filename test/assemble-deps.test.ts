@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix, resolve, win32, type PlatformPath } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as ad from '../scripts/assemble-deps.mjs';
+import { SCRATCH_GIT_TEST_TIMEOUT_MS } from './helpers/timeouts.ts';
 
 const git = (dir: string, ...args: string[]) =>
   execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
@@ -125,143 +126,202 @@ describe('assemble-deps: the build plan follows the sprint spec', () => {
   });
 });
 
-describe('assemble-deps: --checkouts mode against scratch git repositories', () => {
-  it('builds each dep, copies outputs into vendor/<dep>/, and writes PROVENANCE.json with commit, dirty and per-file sha256', async () => {
-    const f = fixture();
-    const calls: { cwd: string; cmd: string; args: string[] }[] = [];
-    const prov = await ad.assembleDeps({
-      mode: 'checkouts',
-      dir: f.checkouts,
-      dockitRoot: f.out,
-      lockPath: f.lockPath,
-      exec: fakeExec(calls),
-      plan: Object.fromEntries(
-        DEPS.map((d) => [
-          d,
-          {
-            steps: [{ cmd: 'build', args: [d] }],
-            outputs: [
-              { from: 'dist/wasm/web', to: '.' },
-              { from: 'dist/' + d + '.out.js', to: d + '.out.js' },
-            ],
-          },
-        ]),
-      ),
-    });
-    expect(calls.map((c) => c.args[0])).toEqual([...DEPS]);
-    for (const d of DEPS) {
-      expect(existsSync(join(f.out, 'vendor', d, `${d}_bg.wasm`))).toBe(true);
-      expect(existsSync(join(f.out, 'vendor', d, `${d}.out.js`))).toBe(true);
-    }
-    const written = JSON.parse(readFileSync(join(f.out, 'vendor', 'PROVENANCE.json'), 'utf8'));
-    expect(written).toEqual(prov);
-    expect(written.deps.map((e: any) => e.dep)).toEqual([...DEPS]);
-    for (const e of written.deps) {
-      expect(e.commit).toBe(f.repos[e.dep]!.sha);
-      expect(e.dirty).toBe(false);
-      expect(e.files.length).toBeGreaterThanOrEqual(2);
-      for (const file of e.files) {
-        expect(file.sha256).toMatch(/^[0-9a-f]{64}$/);
-        expect(file.size).toBeGreaterThan(0);
-        expect(file.path).not.toMatch(/\\/);
-      }
-    }
-  });
-
-  it('a lock mismatch exits 2 before any build runs', async () => {
-    const f = fixture();
-    const lock = JSON.parse(readFileSync(f.lockPath, 'utf8'));
-    lock.deps.pagetriage.commit = 'f'.repeat(40);
-    writeFileSync(f.lockPath, JSON.stringify(lock));
-    const calls: unknown[] = [];
-    await expect(
-      ad.assembleDeps({
+describe(
+  'assemble-deps: --checkouts mode against scratch git repositories',
+  { timeout: SCRATCH_GIT_TEST_TIMEOUT_MS },
+  () => {
+    it('builds each dep, copies outputs into vendor/<dep>/, and writes PROVENANCE.json with commit, dirty and per-file sha256', async () => {
+      const f = fixture();
+      const calls: { cwd: string; cmd: string; args: string[] }[] = [];
+      const prov = await ad.assembleDeps({
         mode: 'checkouts',
         dir: f.checkouts,
         dockitRoot: f.out,
         lockPath: f.lockPath,
-        exec: (...a: unknown[]) => calls.push(a),
-        plan: {},
-      }),
-    ).rejects.toMatchObject({
-      exitCode: 2,
-      message: expect.stringMatching(/pagetriage.*does not match deps\.lock\.json/s),
-    });
-    expect(calls).toEqual([]);
-    expect(existsSync(join(f.out, 'vendor'))).toBe(false);
-  });
-
-  it('a dirty checkout is refused unless --allow-dirty, which records <sha>-dirty', async () => {
-    const f = fixture();
-    writeFileSync(join(f.repos.runtime!.dir, 'README.md'), 'changed\n');
-    const base = {
-      mode: 'checkouts',
-      dir: f.checkouts,
-      dockitRoot: f.out,
-      lockPath: f.lockPath,
-      exec: fakeExec([]),
-      plan: Object.fromEntries(
-        DEPS.map((d) => [d, { steps: [], outputs: [{ from: 'README.md', to: 'README.md' }] }]),
-      ),
-    };
-    await expect(ad.assembleDeps(base)).rejects.toMatchObject({
-      exitCode: 2,
-      message: expect.stringMatching(/runtime.*uncommitted/s),
-    });
-    const prov = await ad.assembleDeps({ ...base, allowDirty: true });
-    const rt = prov.deps.find((e: any) => e.dep === 'runtime');
-    expect(rt.dirty).toBe(true);
-    expect(rt.commit).toBe(`${f.repos.runtime!.sha}-dirty`);
-    expect(prov.deps.find((e: any) => e.dep === 'glyphsift').commit).toBe(f.repos.glyphsift!.sha);
-  });
-
-  it('a missing build output is an error that names the dependency and the path', async () => {
-    const f = fixture();
-    await expect(
-      ad.assembleDeps({
-        mode: 'checkouts',
-        dir: f.checkouts,
-        dockitRoot: f.out,
-        lockPath: f.lockPath,
-        exec: () => {},
+        exec: fakeExec(calls),
         plan: Object.fromEntries(
-          DEPS.map((d) => [d, { steps: [], outputs: [{ from: 'dist/nothing.js', to: 'x.js' }] }]),
+          DEPS.map((d) => [
+            d,
+            {
+              steps: [{ cmd: 'build', args: [d] }],
+              outputs: [
+                { from: 'dist/wasm/web', to: '.' },
+                { from: 'dist/' + d + '.out.js', to: d + '.out.js' },
+              ],
+            },
+          ]),
         ),
-      }),
-    ).rejects.toThrow(/runtime.*dist\/nothing\.js/s);
-  });
+      });
+      expect(calls.map((c) => c.args[0])).toEqual([...DEPS]);
+      for (const d of DEPS) {
+        expect(existsSync(join(f.out, 'vendor', d, `${d}_bg.wasm`))).toBe(true);
+        expect(existsSync(join(f.out, 'vendor', d, `${d}.out.js`))).toBe(true);
+      }
+      const written = JSON.parse(readFileSync(join(f.out, 'vendor', 'PROVENANCE.json'), 'utf8'));
+      expect(written).toEqual(prov);
+      expect(written.deps.map((e: any) => e.dep)).toEqual([...DEPS]);
+      for (const e of written.deps) {
+        expect(e.commit).toBe(f.repos[e.dep]!.sha);
+        expect(e.dirty).toBe(false);
+        expect(e.files.length).toBeGreaterThanOrEqual(2);
+        for (const file of e.files) {
+          expect(file.sha256).toMatch(/^[0-9a-f]{64}$/);
+          expect(file.size).toBeGreaterThan(0);
+          expect(file.path).not.toMatch(/\\/);
+        }
+      }
+    });
 
-  it('a missing checkout folder is an error naming it; --siblings and --checkouts are the only modes', async () => {
-    const f = fixture();
-    await expect(
-      ad.assembleDeps({
+    it('a lock mismatch exits 2 before any build runs', async () => {
+      const f = fixture();
+      const lock = JSON.parse(readFileSync(f.lockPath, 'utf8'));
+      lock.deps.pagetriage.commit = 'f'.repeat(40);
+      writeFileSync(f.lockPath, JSON.stringify(lock));
+      const calls: unknown[] = [];
+      await expect(
+        ad.assembleDeps({
+          mode: 'checkouts',
+          dir: f.checkouts,
+          dockitRoot: f.out,
+          lockPath: f.lockPath,
+          exec: (...a: unknown[]) => calls.push(a),
+          plan: {},
+        }),
+      ).rejects.toMatchObject({
+        exitCode: 2,
+        message: expect.stringMatching(/pagetriage.*does not match deps\.lock\.json/s),
+      });
+      expect(calls).toEqual([]);
+      expect(existsSync(join(f.out, 'vendor'))).toBe(false);
+    });
+
+    it('a dirty checkout is refused unless --allow-dirty, which records <sha>-dirty', async () => {
+      const f = fixture();
+      writeFileSync(join(f.repos.runtime!.dir, 'README.md'), 'changed\n');
+      const base = {
         mode: 'checkouts',
-        dir: join(f.root, 'absent'),
+        dir: f.checkouts,
         dockitRoot: f.out,
         lockPath: f.lockPath,
-        exec: () => {},
-        plan: {},
-      }),
-    ).rejects.toThrow(/absent/);
-    expect(() => ad.parseArgs(['--nothing'])).toThrow(/usage/);
-    expect(ad.parseArgs(['--siblings', '..', '--allow-dirty'])).toMatchObject({
-      mode: 'siblings',
-      dir: '..',
-      allowDirty: true,
+        exec: fakeExec([]),
+        plan: Object.fromEntries(
+          DEPS.map((d) => [d, { steps: [], outputs: [{ from: 'README.md', to: 'README.md' }] }]),
+        ),
+      };
+      await expect(ad.assembleDeps(base)).rejects.toMatchObject({
+        exitCode: 2,
+        message: expect.stringMatching(/runtime.*uncommitted/s),
+      });
+      const prov = await ad.assembleDeps({ ...base, allowDirty: true });
+      const rt = prov.deps.find((e: any) => e.dep === 'runtime');
+      expect(rt.dirty).toBe(true);
+      expect(rt.commit).toBe(`${f.repos.runtime!.sha}-dirty`);
+      expect(prov.deps.find((e: any) => e.dep === 'glyphsift').commit).toBe(f.repos.glyphsift!.sha);
     });
-    expect(ad.parseArgs(['--checkouts', 'deps'])).toMatchObject({
-      mode: 'checkouts',
-      dir: 'deps',
-      allowDirty: false,
-    });
-    expect(() => ad.parseArgs(['--siblings', '..', '--checkouts', 'x'])).toThrow(/usage/);
-  });
 
-  it('siblings mode finds <dir>/<dep>; checkouts mode finds <dir>/<dep> too (the same layout)', () => {
-    expect(ad.depDir('siblings', '/w', 'runtime')).toBe(join('/w', 'runtime'));
-    expect(ad.depDir('checkouts', '/c', 'runtime')).toBe(join('/c', 'runtime'));
-  });
-});
+    it('a missing build output is an error that names the dependency and the path', async () => {
+      const f = fixture();
+      await expect(
+        ad.assembleDeps({
+          mode: 'checkouts',
+          dir: f.checkouts,
+          dockitRoot: f.out,
+          lockPath: f.lockPath,
+          exec: () => {},
+          plan: Object.fromEntries(
+            DEPS.map((d) => [d, { steps: [], outputs: [{ from: 'dist/nothing.js', to: 'x.js' }] }]),
+          ),
+        }),
+      ).rejects.toThrow(/runtime.*dist\/nothing\.js/s);
+    });
+
+    it('a missing checkout folder is an error naming it; --siblings and --checkouts are the only modes', async () => {
+      const f = fixture();
+      await expect(
+        ad.assembleDeps({
+          mode: 'checkouts',
+          dir: join(f.root, 'absent'),
+          dockitRoot: f.out,
+          lockPath: f.lockPath,
+          exec: () => {},
+          plan: {},
+        }),
+      ).rejects.toThrow(/absent/);
+      expect(() => ad.parseArgs(['--nothing'])).toThrow(/usage/);
+      expect(ad.parseArgs(['--siblings', '..', '--allow-dirty'])).toMatchObject({
+        mode: 'siblings',
+        dir: '..',
+        allowDirty: true,
+      });
+      expect(ad.parseArgs(['--checkouts', 'deps'])).toMatchObject({
+        mode: 'checkouts',
+        dir: 'deps',
+        allowDirty: false,
+      });
+      expect(() => ad.parseArgs(['--siblings', '..', '--checkouts', 'x'])).toThrow(/usage/);
+    });
+
+    it('siblings mode finds <dir>/<dep>; checkouts mode finds <dir>/<dep> too (the same layout)', () => {
+      // depDir makes <dir> absolute (--siblings .. is relative to the cwd). On Windows that adds the current drive, so '/w' becomes 'D:\\w': the
+      // expectation is built the same way (resolve, then join) instead of hard-coding what only a POSIX host returns (windows-latest failed on
+      // `expected 'D:\\w\\runtime' to be '\\w\\runtime'`).
+      expect(ad.depDir('siblings', '/w', 'runtime')).toBe(join(resolve('/w'), 'runtime'));
+      expect(ad.depDir('checkouts', '/c', 'runtime')).toBe(join(resolve('/c'), 'runtime'));
+    });
+
+    // The Windows rules, run on any host: depDir takes the path module as an optional fourth argument. path.win32.resolve() reads process.cwd()
+    // for a folder with no drive letter, which on macOS or Linux is a POSIX path, so each module here is pinned to a fixed working directory.
+    describe('depDir with an injected path module (Windows and POSIX rules on any host)', () => {
+      const at = (api: PlatformPath, cwd: string) => ({
+        join: api.join,
+        resolve: (...segments: string[]) => api.resolve(cwd, ...segments),
+      });
+      const winD = at(win32, 'D:\\a\\dockit\\dockit'); // the windows-latest checkout lives on D:
+      const winC = at(win32, 'C:\\Users\\me\\dockit');
+      const nix = at(posix, '/home/runner/work/dockit/dockit');
+
+      it('a drive-less absolute folder takes the drive of the working directory (the windows-latest failure, reproduced)', () => {
+        const got = ad.depDir('siblings', '/w', 'runtime', winD);
+        expect(got).toBe('D:\\w\\runtime');
+        // what the old expectation built by hand: no drive letter, so it can never equal what resolve() returns on Windows
+        expect(got).not.toBe(win32.join('/w', 'runtime'));
+        expect(win32.join('/w', 'runtime')).toBe('\\w\\runtime');
+        expect(ad.depDir('siblings', '/w', 'runtime', winC)).toBe('C:\\w\\runtime');
+      });
+
+      it('siblings and checkouts mode give the same folder on every platform', () => {
+        for (const api of [winD, winC, nix])
+          for (const dir of ['/w', '..', 'deps', 'D:\\x', '\\\\srv\\share\\w'])
+            expect(ad.depDir('checkouts', dir, 'runtime', api), `${dir}`).toBe(
+              ad.depDir('siblings', dir, 'runtime', api),
+            );
+      });
+
+      it('a folder with its own drive keeps it, forward slashes are accepted, and a UNC share stays a UNC share', () => {
+        expect(ad.depDir('checkouts', 'C:\\deps', 'glyphsift', winD)).toBe('C:\\deps\\glyphsift');
+        expect(ad.depDir('checkouts', 'C:/deps', 'glyphsift', winD)).toBe('C:\\deps\\glyphsift');
+        expect(ad.depDir('siblings', '\\\\srv\\share\\w', 'runtime', winD)).toBe(
+          '\\\\srv\\share\\w\\runtime',
+        );
+      });
+
+      it('a relative folder (npm run assemble passes ..) is resolved against the working directory on its drive', () => {
+        expect(ad.depDir('siblings', '..', 'runtime', winD)).toBe('D:\\a\\dockit\\runtime');
+        expect(ad.depDir('siblings', '..\\deps', 'localdata', winC)).toBe(
+          'C:\\Users\\me\\deps\\localdata',
+        );
+        expect(ad.depDir('siblings', '..', 'runtime', nix)).toBe(
+          '/home/runner/work/dockit/runtime',
+        );
+      });
+
+      it('on POSIX nothing is added to an absolute folder', () => {
+        expect(ad.depDir('siblings', '/w', 'runtime', nix)).toBe('/w/runtime');
+        expect(ad.depDir('checkouts', '/c/', 'pagetriage', nix)).toBe('/c/pagetriage');
+      });
+    });
+  },
+);
 
 describe('deps mode selection (stub builds)', () => {
   it('resolveDepsMode: DOCKIT_DEPS=stub gives stub; otherwise vendor when PROVENANCE exists; otherwise a refusal', async () => {
