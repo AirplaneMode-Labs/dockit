@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.3.0-dev] - 2026-11-19 (untagged)
+
+Sprint 6, build work started early on 19 Nov 2026 (version 0.3.0-dev, TD-69; private, not published, not tagged). Every figure is from the Apple M5 Pro 48 GB and is not measured on 8 GB.
+
+### Added
+
+- One model at a time (B1 M1, TD-66): `src/model/model-pool.ts` loads the embedder for the ingest, then per question the embedder and then the answer model, and unloads each (its worker
+  is ended, backend adapter R16) before the next loads. Every load is a first load (R19): the stored manifest is re-verified, the files are acquired from the device only and re-hashed
+  in the worker, with no "already verified" flag. Unit tests: at most one engine over an ingest and seven questions, the fixed order, a failed unload still releases, the verify counter
+  (8 embedder and 7 generator verifies for 7 questions, `cacheOnly` on every acquire). `test:e2e` samples the worker targets every 100 ms (never more than one) and checks the order of
+  `model.load` and `model.unload`. (D5-03)
+- The memory line (B1 M6, TD-67, TD-84): the threshold is read from the verified manifest's answer entry (`minProfile.ramGb`), never from a constant in the page (the UI constant in
+  `wiring.ts` is gone). The capability card states the line and the reported value; below the line a load is refused with `unsupported_profile` after the manifest is verified and before
+  any model byte is read; a browser that reports no memory is not below it. A usability guard, not a security control. The out-of-memory failure of the engine is its own plain refusal
+  (`out_of_memory`); what the engine said never reaches an event or the screen. (D5-03)
+- Stream accounting before pdf.js (S1-107, TD-70, TD-85): `account_pdf_streams` (pagetriage) runs in the analysis worker right after the read stage, with no options; a limit refusal is
+  `stream_limit` with a plain sentence per kind, anything the accounting cannot vouch for is `corrupt` with "This PDF's structure could not be checked safely, so it was refused before it was
+  opened." (an encrypted file keeps its own refusal). Bombs generated at test time (font, image, a broken cross-reference table) are refused with no pdf worker and no extract event; the
+  measured peaks are in the README. (D5-06)
+- The bytes that triage judged are the bytes pdf.js opens (B1 M3): the one buffer goes to the analysis worker by transfer and comes back; the read stage records its length and SHA-256 and the
+  extract stage refuses (`corrupt`) on a mismatch; the file is read once. The analysis worker and the pdf worker are ended as soon as their stage ends. (D5-03)
+- `docs/benchmarks/e2e-s6-baseline.csv` and `e2e-questions-s6-baseline.csv` (the pair taken before the measures, TD-77), a before and after table in the README built from both pairs by
+  `scripts/bench-readme.mjs`, and `B1-result.md`'s outcome in the README: the median peak went from 6,307 MiB to 5,441 MiB; the 5,120 MiB target was **missed**; the question set stayed at 24 of 36
+  and 4 of 6; the median per-question total rose from 9,391 ms to 11,950 ms (guard 12,500 ms). (D5-02, D5-04)
+- `wasmMemoryPeak` in the benchmark harness is the most WebAssembly memory the workers held at once; with one model at a time a sum over every load would count loads that never coexisted. (D5-04)
+- Re-vendored spec release 0.6.0 (manifest 0.1.3 with `weak_key_refused`, capability profile 0.1.1, event 0.1.5, storage API 0.4.0, backend adapter 0.5.0). The stub trust root (an all-zero key)
+  is a small-order point that a 0.1.3 verifier refuses; the stub keeps it, and a test proves with independent Ed25519 arithmetic that it is weak and that the stub runtime can never verify anything. (D5-07)
+
+- `bench:e2e` writes the 1-minute load average at the start and end of every run (`host_load_1m_start`, `host_load_1m_end`, two trailing columns of `e2e.csv`; `e2e-questions.csv` is unchanged), and the README, `B1-result.md`
+  and the site page say that process-tree peaks are comparable only between runs on a quiet host. The baseline CSV is not rewritten and every reader accepts a CSV without the two columns. No product code changed. (BUG-T1-S6-05)
+
+### Changed
+
+- The embedding batch is 8 passages, not 32 (B1 M4): kept because the fixed question set and the top-ranked-passage column did not change. (D5-03)
+- `pipeline.answer` has the outcome `aborted` for the user's Stop, with no reason (S1-119, event 0.1.5). A Stop after the first token logs it with the first-token time next to the runtime's one
+  `model.generate` with finishReason `abort`; a Stop before the first token logs it too, with no `model.generate` and no first-token time, and never `skipped` or `error` (BUG-T1-S6-03). (D5-05)
+- One rounding rule for every memory figure: the README table, the status line and the tests all take the exact median and round once, through `scripts/memory-figures.mjs`
+  (used by `scripts/status-line.mjs` and `scripts/bench-readme.mjs`), so a printed fall can differ by 1 MiB from subtracting two rounded figures (BUG-T1-S6-04).
+- The not-yet box and the Limitations say what the memory line and the stream accounting are not, what a question now costs in time, and the measured outcome of the font bomb. (D5-10)
+- `deps.lock.json` and `NOTICE` name the pushed pagetriage head `eb28e49` (a test-only fix of 18 Nov); the wrap-up writes the Sprint 6 sibling commits. (D5-02)
+
+### Fixed
+
+- Part A (D5-01): the status line, the not-yet box and the README no longer say that the live page changes only after the owner pushes; the page has been live since the owner's push of 18 Nov 2026
+  (`pages.yml` deployed the roughly 800 MB bundle twice), and a later sprint's page reaches it only when the owner pushes it. The README no longer calls the first Pages deploy unproven.
+- An engine load on a browser that does not report its memory was refused by the runtime's own `minProfile` check (it reads `ramGb` 0 as below every line), against TD-84. dockit first handed the
+  adapter a profile whose unknown memory was the line itself (`profileForAdapter`); once `satisfies()` in the runtime was fixed so that an unknown value is not below a line, that workaround was
+  removed and dockit passes the reported profile unchanged. A reported value below the line is still refused. (D5-03, BUG-T1-S6-02)
+
+### Security
+
+- S1-107 is closed for the font and image cases and the structure cases above (a font bomb peaked at 3,056 MiB against 8,121 MiB in Sprint 5). pdf.js's own inline-image and Type 3 decoding stay
+  documented residuals. (D5-06)
+- The memory line is a usability guard, not a security control; it can be overridden by a user. (D5-03)
+
+## [0.2.0-dev] - 2026-11-18 (untagged)
+
+Sprint 5 and the earlier sprints (pushed on 18 Nov 2026), as they were written.
+
 ### Added
 
 - Sprint 5 (18 Nov 2026, committed, not pushed; version 0.2.0-dev): the real pipeline. A PDF goes through pagetriage (WebAssembly, analysis worker), text-layer
