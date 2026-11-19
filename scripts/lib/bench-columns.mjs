@@ -8,7 +8,8 @@
 
 export const LAPTOP_8GB = 'not measured on 8 GB';
 
-export const E2E_COLUMNS = [
+/** The columns of every e2e.csv written before BUG-T1-S6-05 (the committed baseline has exactly these). */
+export const E2E_COLUMNS_BASE = [
   'date',
   'machine',
   'chrome',
@@ -39,6 +40,15 @@ export const E2E_COLUMNS = [
   'answer_ok',
   'laptop_8gb',
 ];
+
+/**
+ * BUG-T1-S6-05: two trailing columns say how busy the host was (os.loadavg() 1-minute, two decimals) at the start and end of the run, so a peak taken under
+ * load can be told from a quiet one. A CSV without them is still valid input to every reader.
+ */
+export const E2E_COLUMNS = [...E2E_COLUMNS_BASE, 'host_load_1m_start', 'host_load_1m_end'];
+
+/** One load-average figure as written to the CSV. */
+export const hostLoad = (v) => Number(v).toFixed(2);
 
 export const Q_COLUMNS = [
   'date',

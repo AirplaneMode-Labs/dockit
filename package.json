@@ -1,6 +1,6 @@
 {
   "name": "@airplanemode/dockit",
-  "version": "0.2.0-dev",
+  "version": "0.3.0-dev",
   "private": true,
   "description": "Offline document intelligence kit: an installable PWA that answers a question over a PDF with a small local model, in the browser, with no request after the models are cached.",
   "license": "Apache-2.0",

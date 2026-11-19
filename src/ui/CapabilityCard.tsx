@@ -1,14 +1,19 @@
 import type { AppState } from '../app/controller.ts';
+import { MEMORY_UNKNOWN_TEXT, memoryBelowText, memoryLineText } from '../pipeline/memory-line.ts';
 
 /** The runtime capability profile and the verdict against the model's minProfile. Every figure is a text node. */
 export function CapabilityCard({ capability }: { capability: AppState['capability'] }) {
   const p = capability.profile;
+  // The verdict is the memory line (TD-67): read from the verified manifest, never a constant of the page. Unknown is not below it (TD-84).
+  const m = capability.memory;
   const verdictText =
-    capability.verdict === 'meets'
-      ? 'This device meets the minimum for the demo model.'
-      : capability.verdict === 'below'
-        ? 'This device is below the minimum for the demo model.'
-        : 'Not measured yet.';
+    m.kind === 'meets'
+      ? memoryLineText(m.reportedGb, m.requiredGb)
+      : m.kind === 'below'
+        ? memoryBelowText(m.reportedGb, m.requiredGb)
+        : m.kind === 'unknown'
+          ? MEMORY_UNKNOWN_TEXT
+          : 'No memory line yet: the model list is not verified on this device.';
   return (
     <section className="card" data-testid="capability-card">
       <h2>Capability profile</h2>

@@ -25,6 +25,10 @@ async function loadModules(): Promise<WasmModules> {
     e.memory instanceof WebAssembly.Memory ? e.memory.buffer.byteLength : null;
   return {
     pagetriage: {
+      // a pagetriage build without account_pdf_streams leaves this undefined: the call throws and every file is refused as unchecked (fail closed)
+      account_pdf_streams: pt[
+        'account_pdf_streams'
+      ] as WasmModules['pagetriage']['account_pdf_streams'],
       analyse_pdf_structure: pt[
         'analyse_pdf_structure'
       ] as WasmModules['pagetriage']['analyse_pdf_structure'],
@@ -39,14 +43,15 @@ async function loadModules(): Promise<WasmModules> {
 
 const core = loadModules().then(createAnalysisCore);
 const scope = self as unknown as {
-  postMessage(m: unknown): void;
+  postMessage(m: unknown, transfer?: Transferable[]): void;
   addEventListener(t: 'message', fn: (e: MessageEvent<AnalysisRequest>) => void): void;
 };
 scope.addEventListener('message', (e) => {
   void core
     .then((c) => c.handle(e.data))
     .then(
-      (r) => scope.postMessage(r),
+      // a triage response hands the request's buffer back by transfer (B1 M3): nothing is copied, and the page can check what came home
+      (r) => scope.postMessage(r, r.type === 'triage' ? [r.bytes] : []),
       () =>
         scope.postMessage({
           v: 1,

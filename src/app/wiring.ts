@@ -14,7 +14,7 @@ import { startAnalysisWorker, startPdfWorker } from '../workers/start.ts';
 import { createAnalysisClient } from '../workers/analysis-client.ts';
 import { extractPdfText } from '../workers/pdf-extract.ts';
 import { loadPdfJs } from '../workers/pdf-loader.ts';
-import { loadAdapters } from './adapters.ts';
+import { loadAdapter } from './adapters.ts';
 import { AppController } from './controller.ts';
 
 export const events = new EventLog(500);
@@ -33,15 +33,15 @@ interface AssetManagerLike extends AssetsPort {
   ): Promise<unknown>;
 }
 
-/** The runtime's capability profile and the verdict against the demo models' minimum (wasm-simd, 4 GB, 2 GB free). */
+/**
+ * The runtime's capability profile. The verdict against the model's minimum is not decided here: the memory line is read from the verified
+ * manifest's answer entry by the model service and the controller (B1 M6, TD-67). No threshold is a constant of the page.
+ */
 async function detectCapability() {
   const rt = runtime as unknown as {
     detectCapabilities(): Promise<import('../contracts/capability-profile.ts').CapabilityProfile>;
-    satisfies(p: unknown, min: unknown): boolean;
   };
-  const profile = await rt.detectCapabilities();
-  const meets = rt.satisfies(profile, { backendTier: 'wasm-simd', ramGb: 4, storageFreeGb: 2 });
-  return { profile, verdict: meets ? ('meets' as const) : ('below' as const) };
+  return { profile: await rt.detectCapabilities() };
 }
 
 export async function createAppController(): Promise<AppController> {
@@ -76,7 +76,8 @@ export async function createAppController(): Promise<AppController> {
     assets,
     trust: TRUSTED_KEYS,
     events,
-    loadAdapters: (m, a, o) => loadAdapters(m, a, { ...o, events }),
+    loadAdapter: (kind, m, a, o) => loadAdapter(kind, m, a, { ...o, events }),
+    profile: async () => (await detectCapability()).profile,
   });
   return new AppController({
     framed,

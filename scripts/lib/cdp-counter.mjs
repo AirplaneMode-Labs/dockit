@@ -144,5 +144,10 @@ export async function connectCdp(userDataDir, { timeoutMs = 15000 } = {}) {
     }
   });
   await send('Target.setAutoAttach', attach);
-  return { ledger, close: () => ws.close() };
+  return {
+    ledger,
+    close: () => ws.close(),
+    /** Target.getTargets over the browser-level session: the targets that exist right now (used to sample the worker count, B1 M1). */
+    getTargets: () => send('Target.getTargets'),
+  };
 }

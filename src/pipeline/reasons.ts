@@ -7,7 +7,7 @@ import {
   type PipelineStage,
 } from '../contracts/event.ts';
 
-// One source of truth: the vendored contract (spec release 0.5.0, event 0.1.4).
+// One source of truth: the vendored contract (spec release 0.6.0, event 0.1.5).
 export { PIPELINE_REASONS, PIPELINE_STAGES };
 export type { PipelineReason, PipelineStage };
 
@@ -31,6 +31,12 @@ export const REFUSAL_MESSAGES: Record<PipelineReason, string> = {
   not_analysed: 'This page could not be analysed, so it was skipped.',
   held_low_score: 'This passage was held back by the glyph gate and is not searched.',
   framed: 'dockit does not run inside another page. Open it directly.',
+  // B1: an allocation failure in the engine (backend adapter R18). What the engine said is never shown or logged.
+  out_of_memory:
+    'The browser ran out of memory while running the model, so the answer was stopped. Close other tabs and try again; this device may not have enough memory for the demo model.',
+  // S1-107: pagetriage's stream accounting refused the file before pdf.js ran. The sentence for the actual part comes from streams.ts.
+  stream_limit:
+    'This PDF holds a part that unpacks to more than dockit will open, so it was refused before it was opened.',
 };
 
 /**

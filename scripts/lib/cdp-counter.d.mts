@@ -10,4 +10,8 @@ export function createLedger(): Ledger;
 export function connectCdp(
   userDataDir: string,
   o?: { timeoutMs?: number },
-): Promise<{ ledger: Ledger; close(): void }>;
+): Promise<{
+  ledger: Ledger;
+  close(): void;
+  getTargets(): Promise<{ targetInfos: { type: string; url: string; title?: string }[] }>;
+}>;

@@ -64,6 +64,7 @@ export async function launch(playwright, { profileDir, headless = true, watch = 
   return {
     ctx,
     page,
+    cdp,
     ledger: cdp?.ledger,
     async close() {
       cdp?.close();
@@ -244,16 +245,26 @@ export async function askThenStop(
 export async function watchModelReload(page) {
   await page.evaluate(() => {
     const w = globalThis;
-    w.__reload = { loadingAt: null, readyAt: null, text: '' };
+    // one span per load: B1 M1 loads the embedder and then the answer model for a question, each from the cached files
+    w.__reload = { loadingAt: null, readyAt: null, text: '', spans: [], open: null };
     const el = document.querySelector('[data-testid="model-status"]');
     const note = () => {
       const status = el?.getAttribute('data-status');
-      if (status === 'loading' && w.__reload.loadingAt === null) {
-        w.__reload.loadingAt = performance.now();
-        w.__reload.text = el.textContent ?? '';
+      if (status === 'loading' && w.__reload.open === null) {
+        w.__reload.open = performance.now();
+        if (w.__reload.loadingAt === null) {
+          w.__reload.loadingAt = w.__reload.open;
+          w.__reload.text = el.textContent ?? '';
+        }
       }
-      if (status === 'ready' && w.__reload.loadingAt !== null && w.__reload.readyAt === null)
-        w.__reload.readyAt = performance.now();
+      if (status !== 'loading' && w.__reload.open !== null) {
+        if (status === 'ready' || status === 'cached') {
+          w.__reload.spans.push(performance.now() - w.__reload.open);
+          if (status === 'ready' && w.__reload.readyAt === null)
+            w.__reload.readyAt = performance.now();
+        }
+        w.__reload.open = null;
+      }
     };
     new MutationObserver(note).observe(el, {
       attributes: true,
@@ -265,14 +276,42 @@ export async function watchModelReload(page) {
   });
 }
 
-/** { sawLoading, text, ms }: ms is the time the card spent loading (null when it never did, or never became ready). */
+/**
+ * { sawLoading, text, ms, loads }: text is what the card said at the first load; ms is the total time the card spent loading, summed over
+ * every load of the question (null when it never loaded); loads is how many loads there were (an embedder and an answer model per question).
+ */
 export async function modelReloadResult(page) {
   const r = await page.evaluate(() => globalThis.__reload);
+  const spans = r?.spans ?? [];
   return {
     sawLoading: r?.loadingAt !== null && r?.loadingAt !== undefined,
     text: r?.text ?? '',
-    ms: r?.loadingAt != null && r?.readyAt != null ? Math.round(r.readyAt - r.loadingAt) : null,
+    ms: spans.length > 0 ? Math.round(spans.reduce((a, b) => a + b, 0)) : null,
+    loads: spans.length,
   };
+}
+
+/**
+ * Samples Target.getTargets every `intervalMs` (100 ms) and records how many dedicated worker targets exist at each sample (B1 M1: never
+ * more than one engine at a time; every dockit worker, engine or analysis or pdf, is started from a blob bootstrap, so they cannot be told
+ * apart by URL, and the stages are sequential, so the count over a whole run is the bound). stop() resolves with the samples.
+ */
+export function sampleWorkerTargets(cdp, { intervalMs = 100 } = {}) {
+  const samples = [];
+  let stopped = false;
+  const loop = (async () => {
+    while (!stopped) {
+      const r = await cdp.getTargets().catch(() => undefined);
+      const infos = r?.targetInfos ?? [];
+      samples.push({
+        at: Date.now(),
+        workers: infos.filter((t) => t.type === 'worker').length,
+        serviceWorkers: infos.filter((t) => t.type === 'service_worker').length,
+      });
+      await new Promise((res) => setTimeout(res, intervalMs));
+    }
+  })();
+  return { stop: async () => ((stopped = true), await loop, samples) };
 }
 
 /** The runtime DevTools snapshot: counts, timings, memory and model events. */
@@ -294,27 +333,41 @@ export function stageTimings(events, sinceTs = 0) {
 }
 
 /**
- * wasm_memory_peak_bytes: the sum of the engine workers' peaks (model.memory, one loadId per engine worker) and the analysis worker's peak
- * (pipeline.memory). Empty (null) when any of them is unavailable or missing: never estimated.
+ * wasm_memory_peak_bytes: the most WebAssembly memory the workers held AT ONCE, from the events (model.memory carries a loadId and bytes, model.unload
+ * ends a loadId, pipeline.memory is the analysis worker's peak). Sprint 5 added the peak of every engine to the analysis worker's, because they all lived
+ * together. With one model at a time (a model.unload for every model.load, runtime spec 0.6.0) a sum over every load of a run would count 15 loads as if
+ * they coexisted, so the engines are summed only while they are alive together; and the analysis worker, which ends before the next engine loads, is then
+ * compared with them instead of added to them. A run with no model.unload at all is the Sprint 5 case and keeps its old figure. Empty (null) when any of
+ * them is unavailable or missing: never estimated.
  */
 export function wasmMemoryPeak(events) {
-  const engine = new Map();
+  const live = new Map();
+  let enginePeak = 0;
+  let sawEngine = false;
+  let sawUnload = false;
   let unavailable = false;
+  let analysis = null;
   for (const e of events) {
     if (e.name === 'model.memory') {
       if (e.attrs.measure !== 'wasm-memory' || typeof e.bytes !== 'number') unavailable = true;
-      else engine.set(e.attrs.loadId, Math.max(engine.get(e.attrs.loadId) ?? 0, e.bytes));
-    }
-  }
-  let analysis = null;
-  for (const e of events) {
-    if (e.name === 'pipeline.memory') {
+      else {
+        sawEngine = true;
+        live.set(e.attrs.loadId, Math.max(live.get(e.attrs.loadId) ?? 0, e.bytes));
+        enginePeak = Math.max(
+          enginePeak,
+          [...live.values()].reduce((a, b) => a + b, 0),
+        );
+      }
+    } else if (e.name === 'model.unload') {
+      sawUnload = true;
+      live.delete(e.attrs.loadId);
+    } else if (e.name === 'pipeline.memory') {
       if (e.attrs.measure !== 'wasm-memory' || typeof e.bytes !== 'number') unavailable = true;
       else analysis = Math.max(analysis ?? 0, e.bytes);
     }
   }
-  if (unavailable || engine.size === 0 || analysis === null) return null;
-  return [...engine.values()].reduce((a, b) => a + b, 0) + analysis;
+  if (unavailable || !sawEngine || analysis === null) return null;
+  return sawUnload ? Math.max(enginePeak, analysis) : enginePeak + analysis;
 }
 
 /** Samples the main-thread JS heap (Chrome started with --enable-precise-memory-info) until stopped; resolves with the peak. */

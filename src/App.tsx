@@ -257,8 +257,21 @@ export function App({
               build, not who published them.
             </li>
             <li>
-              No WebLLM (cut), no multi-document chat. The live page changes only after the owner
-              pushes.
+              No WebLLM (cut), no multi-document chat. This page has been live since the owner's
+              push of 18 Nov 2026.
+            </li>
+            <li>
+              Memory: only one model is held at a time, so the models are loaded again from this
+              device for each stage and every question takes longer. Every question loads the models
+              again from this device. The memory line is a usability guard, not a security control:
+              the browser reports memory in coarse steps and a user can change what it reports, and
+              a page cannot read how much memory is free. Not measured on an 8 GB laptop.
+            </li>
+            <li>
+              Hostile files: a PDF whose structure cannot be checked is refused before it is opened,
+              which includes a damaged file that other readers would repair. A PDF that holds a part
+              which unpacks to more than the limit is refused in the same way. Inline-image and Type
+              3 procedure decoding by pdf.js stay unchecked.
             </li>
             <li data-testid="tt-status">
               Trusted Types is on for scripts (require-trusted-types-for 'script'; policies

@@ -1,8 +1,12 @@
-import type { BackendAdapter } from '../contracts/backend-adapter.ts';
 import type { EventSink } from '../contracts/event.ts';
 import { MANIFEST_ID_PATTERN } from './manifest-id.ts';
+import { memoryLineOf } from './entries.ts';
+import type { EngineKind, LoadedEngine } from './model-pool.ts';
+import { assessMemory, memoryRefusalMessage } from '../pipeline/memory-line.ts';
 import { mapAdapterError } from '../pipeline/pipeline.ts';
 import { Refusal, isRefusal } from '../pipeline/reasons.ts';
+
+export type { EngineKind, LoadedEngine };
 
 /** The size cap on a manifest document, fetched or stored. The dockit bundle's manifest is a few KiB. */
 export const MANIFEST_MAX_BYTES = 1024 * 1024;
@@ -16,6 +20,8 @@ export interface ManifestEntryLike {
   sha256: string;
   kind: string;
   pin?: boolean;
+  /** The signed minimum profile of this entry (manifest 0.1.x). minProfile.ramGb of the answer entry is the memory line. */
+  minProfile?: { ramGb?: number; [k: string]: unknown };
 }
 
 export interface ManifestLike {
@@ -50,19 +56,6 @@ export interface ManifestStorePort {
   delete(manifestId: string): Promise<void>;
 }
 
-export interface LoadedModels {
-  generator: Pick<BackendAdapter, 'generate'>;
-  embedder: Pick<BackendAdapter, 'embed'>;
-  /** The loaded tokenizer's special and added token strings, for the prompt sanitiser. */
-  specialTokens: readonly string[];
-  /**
-   * Ends both engine workers and releases their hold on the model files. The controller calls it on a set of adapters it is replacing
-   * (after a Stop the generator is already gone: the worker host terminates the worker on an abort, R8) so that a re-load never runs beside a
-   * model that is no longer used.
-   */
-  unload?(): Promise<void>;
-}
-
 export interface ModelServiceDeps {
   /** Required: the manifest id this app accepts ('dev.airplanemode.dockit-models'). The service throws at start without it. */
   expectManifestId: string;
@@ -76,12 +69,21 @@ export interface ModelServiceDeps {
   /** The trust root compiled into the build (src/generated/trust-root.ts). Never fetched. */
   trust: ReadonlyMap<string, Uint8Array>;
   events: EventSink;
-  /** Builds the engine adapters over the verified assets. With cacheOnly nothing is downloaded. */
-  loadAdapters(
+  /**
+   * Builds ONE engine adapter (B1 M1: never two at a time) over the verified assets, a first load every time. With cacheOnly nothing is
+   * downloaded: a cache miss is a refusal, never a fetch.
+   */
+  loadAdapter(
+    kind: EngineKind,
     manifest: ManifestLike,
     assets: AssetsPort,
     opts: { cacheOnly: boolean },
-  ): Promise<LoadedModels>;
+  ): Promise<LoadedEngine>;
+  /**
+   * The runtime capability profile (ramGb 0 means the browser does not report its memory). Optional: without it there is no memory line.
+   * A rejection is no verdict (nothing is refused).
+   */
+  profile?(): Promise<{ ramGb: number }>;
 }
 
 const refuse = (reason: string, message: string): Refusal =>
@@ -137,8 +139,13 @@ export interface ModelService {
     signal?: AbortSignal;
     onProgress?: (p: DownloadProgress) => void;
   }): Promise<void>;
-  /** Re-verify the stored manifest bytes (S-OFF-1) and load the adapters from the cache only. */
-  load(): Promise<LoadedModels & { manifest: ManifestLike }>;
+  /**
+   * Re-verify the stored manifest bytes (S-OFF-1), check the memory line against the verified manifest, and load ONE engine from the cache
+   * only. Every call is a first load (R19): nothing is remembered between calls.
+   */
+  load(kind: EngineKind): Promise<LoadedEngine & { manifest: ManifestLike }>;
+  /** The memory line, minProfile.ramGb of the answer entry of the verified manifest; undefined when there is none or no manifest verifies. */
+  memoryLine(): Promise<number | undefined>;
   status(): Promise<{ cached: boolean }>;
   /** Total bytes the Download button would fetch, or undefined when it cannot be known (offline, nothing stored). */
   plannedBytes(): Promise<number | undefined>;
@@ -202,7 +209,40 @@ export function createModelService(deps: ModelServiceDeps): ModelService {
     await deps.manifests.put(id, bytes);
   }
 
-  async function load() {
+  const lineOf = memoryLineOf;
+
+  /**
+   * B1 M6: below the line the load is refused with unsupported_profile, after the manifest is verified and before any model byte is read. An
+   * unknown memory (ramGb 0) is not below it (TD-84), and neither is a profile that cannot be read.
+   */
+  async function assertMemoryLine(manifest: ManifestLike): Promise<void> {
+    const required = lineOf(manifest);
+    if (required === undefined || deps.profile === undefined) return;
+    let ramGb: number;
+    try {
+      ramGb = (await deps.profile()).ramGb;
+    } catch {
+      return;
+    }
+    const v = assessMemory(ramGb, required);
+    if (v.kind === 'below')
+      throw new Refusal('unsupported_profile', memoryRefusalMessage(v.reportedGb, v.requiredGb));
+  }
+
+  async function memoryLine(): Promise<number | undefined> {
+    try {
+      let bytes = await deps.manifests.get(id);
+      if (bytes === undefined) {
+        if (!deps.online()) return undefined;
+        bytes = (await fetchAndVerify()).bytes;
+      }
+      return lineOf(await verifyBytes(bytes));
+    } catch {
+      return undefined;
+    }
+  }
+
+  async function load(kind: EngineKind) {
     let stored = await deps.manifests.get(id);
     if (stored === undefined) throw new Refusal('model_not_cached');
     let manifest: ManifestLike;
@@ -222,10 +262,11 @@ export function createModelService(deps: ModelServiceDeps): ModelService {
       stored = await deps.manifests.get(id);
       manifest = await verifyBytes(stored!);
     }
+    await assertMemoryLine(manifest);
     try {
-      let models: LoadedModels;
+      let models: LoadedEngine;
       try {
-        models = await deps.loadAdapters(manifest, deps.assets, { cacheOnly: true });
+        models = await deps.loadAdapter(kind, manifest, deps.assets, { cacheOnly: true });
       } catch (first) {
         // Observed in Chrome 157: a model file that was written less than about a second ago can fail its first read by the engine (code
         // 'backend'); the same load a moment later succeeds. One more try after a pause; an integrity failure is never retried.
@@ -235,7 +276,7 @@ export function createModelService(deps: ModelServiceDeps): ModelService {
         )
           throw first;
         await new Promise((r) => setTimeout(r, LOAD_RETRY_PAUSE_MS));
-        models = await deps.loadAdapters(manifest, deps.assets, { cacheOnly: true });
+        models = await deps.loadAdapter(kind, manifest, deps.assets, { cacheOnly: true });
       }
       return { ...models, manifest };
     } catch (raw) {
@@ -276,5 +317,5 @@ export function createModelService(deps: ModelServiceDeps): ModelService {
     }
   }
 
-  return { download, load, status, plannedBytes };
+  return { download, load, memoryLine, status, plannedBytes };
 }

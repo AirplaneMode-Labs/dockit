@@ -1,6 +1,8 @@
 import type { CapabilityProfile } from '../contracts/capability-profile.ts';
 import type { EventSink } from '../contracts/event.ts';
-import type { ModelService, LoadedModels, DownloadProgress } from '../model/model-service.ts';
+import type { ModelService, DownloadProgress } from '../model/model-service.ts';
+import { createModelPool, type ModelPool, type PoolState } from '../model/model-pool.ts';
+import { assessMemory, type MemoryVerdict } from '../pipeline/memory-line.ts';
 import {
   adapterOutcome,
   createPipeline,
@@ -12,7 +14,6 @@ import {
   type Pipeline,
   type PipelineDeps,
 } from '../pipeline/pipeline.ts';
-import { DEFAULT_SPECIAL_TOKENS } from '../pipeline/prompt.ts';
 import {
   Refusal,
   isRefusal,
@@ -45,11 +46,17 @@ export interface AppState {
   online: boolean;
   capability: {
     profile: CapabilityProfile | null;
+    /** The memory line (TD-67): meets, below, or unknown (the browser reports no memory, or no verified manifest gives a line; TD-84). */
     verdict: 'meets' | 'below' | 'unknown';
+    /** The detail behind the verdict: the reported and the required GB. */
+    memory: MemoryVerdict;
     note: string;
   };
   model: {
-    /** cached: verified on this device, nothing loaded. loading: being loaded (reloading true after a Stop). ready: loaded in the engine workers. */
+    /**
+     * cached: verified on this device, nothing loaded now (the state between two uses: one engine at a time, B1 M1). loading: an engine is being
+     * loaded from this device (reloading true for every load after the first of this page). ready: an engine is loaded and in use.
+     */
     status: 'unknown' | 'absent' | 'downloading' | 'cached' | 'loading' | 'ready' | 'refused';
     /** True while a model that a Stop ended is being loaded again from the files already on the device. */
     reloading?: boolean;
@@ -85,8 +92,9 @@ export interface ControllerDeps {
   models: ModelService;
   /** Defaults to createPipeline; tests inject a fake. */
   makePipeline?: (deps: PipelineDeps) => Pipeline;
-  pipelineDeps: Omit<PipelineDeps, 'embedder' | 'generator' | 'specialTokens' | 'events'>;
-  detectCapability(): Promise<{ profile: CapabilityProfile; verdict: 'meets' | 'below' }>;
+  pipelineDeps: Omit<PipelineDeps, 'models' | 'events'>;
+  /** The runtime capability profile. The verdict is the controller's: the memory line of the verified manifest against profile.ramGb. */
+  detectCapability(): Promise<{ profile: CapabilityProfile }>;
   online(): boolean;
 }
 
@@ -122,23 +130,27 @@ export class AppController {
   #state: AppState;
   #listeners = new Set<() => void>();
   #pipeline: Pipeline | undefined;
-  /** The adapters that are loaded now. Undefined before the first use and after a Stop (the worker host ends the engine worker on an abort, R8). */
-  #loaded: LoadedModels | undefined;
-  #loading: Promise<LoadedModels> | undefined;
-  /** True once the engine was ended: the next load is a re-load, and says so. */
-  #reloadNeeded = false;
-  /** Releasing the ended adapters; a re-load waits for it so two models never sit in memory together. */
-  #unloading: Promise<void> | undefined;
+  /** One engine at a time (B1 M1): every use loads from the verified cache and unloads, so two models never sit in memory together. */
+  readonly #pool: ModelPool;
   #abort: AbortController | undefined;
   readonly #deps: ControllerDeps;
   readonly #progress = new Map<string, { received: number; total: number }>();
 
   constructor(deps: ControllerDeps) {
     this.#deps = deps;
+    this.#pool = createModelPool({
+      load: (kind) => deps.models.load(kind),
+      onState: (state) => this.#onPool(state),
+    });
     this.#state = {
       framed: deps.framed,
       online: deps.online(),
-      capability: { profile: null, verdict: 'unknown', note: CAPABILITY_NOTE },
+      capability: {
+        profile: null,
+        verdict: 'unknown',
+        memory: { kind: 'no_line' },
+        note: CAPABILITY_NOTE,
+      },
       model: {
         status: 'unknown',
         plannedBytes: undefined,
@@ -191,9 +203,21 @@ export class AppController {
 
   async init(): Promise<void> {
     if (this.#state.framed) return;
-    const cap = this.#deps.detectCapability().then(
-      ({ profile, verdict }) =>
-        this.#set((s) => ({ ...s, capability: { profile, verdict, note: CAPABILITY_NOTE } })),
+    const line = this.#deps.models.memoryLine().catch(() => undefined);
+    const cap = Promise.all([this.#deps.detectCapability(), line]).then(
+      ([{ profile }, requiredGb]) => {
+        const memory = assessMemory(profile.ramGb ?? 0, requiredGb);
+        this.#set((s) => ({
+          ...s,
+          capability: {
+            profile,
+            verdict:
+              memory.kind === 'meets' ? 'meets' : memory.kind === 'below' ? 'below' : 'unknown',
+            memory,
+            note: CAPABILITY_NOTE,
+          },
+        }));
+      },
       () => undefined,
     );
     const planned = this.#deps.models.plannedBytes();
@@ -314,94 +338,39 @@ export class AppController {
   }
 
   /**
-   * The models are loaded the first time a stage needs them: a refusal that comes earlier (scanned, too large, ...) never loads them. After a
-   * Stop the engine is gone, so the next use goes through the SAME load path again (models.load(): re-verifies the stored manifest, S-OFF-1,
-   * checks the signature and the expected id, loads from the cached files, hashes every file in the worker, R15). Nothing is downloaded. While
-   * that runs the card says so (status loading, reloading true); if it fails, the card and the ask show the real reason.
+   * The model card follows the pool (B1 M1). An engine is loaded from the SAME path every time (models.load: re-verifies the stored manifest,
+   * S-OFF-1, checks the signature and the expected id and the memory line, loads from the cached files, hashes every file in the worker, R15;
+   * nothing is downloaded), used, and unloaded. While one loads the card says so (status loading, reloading true after the first load of this
+   * page); between two uses the files are on the device and nothing is loaded (cached); if a load fails, the card and the ask show the real
+   * reason.
    */
-  #getModels(): Promise<LoadedModels> {
-    if (this.#loaded) return Promise.resolve(this.#loaded);
-    this.#loading ??= (async () => {
-      const again = this.#reloadNeeded;
+  #onPool(state: PoolState): void {
+    if (state.phase === 'loading') {
       this.#set((s) => ({
         ...s,
-        model: { ...s.model, status: 'loading', reloading: again, refusal: undefined },
+        model: { ...s.model, status: 'loading', reloading: state.again, refusal: undefined },
       }));
-      try {
-        await this.#unloading; // the engine that was stopped is released before the next one is loaded
-        this.#unloading = undefined;
-        const m = await this.#deps.models.load();
-        this.#loaded = m;
-        this.#reloadNeeded = false;
-        this.#set((s) => ({ ...s, model: { ...s.model, status: 'ready', reloading: false } }));
-        return m;
-      } catch (e) {
-        const r = mapAdapterError(e);
-        const info = refusalInfo(r) ?? {
-          reason: 'failed' as const,
-          message: 'The model could not be loaded.',
-        };
-        this.#set((s) => ({
-          ...s,
-          model: {
-            ...s.model,
-            status: info.reason === 'model_not_cached' ? 'absent' : 'refused',
-            reloading: false,
-            refusal: info,
-          },
-        }));
-        throw r;
-      } finally {
-        this.#loading = undefined;
-      }
-    })();
-    return this.#loading;
-  }
-
-  /** The engine behind `models` is gone (a Stop, or a worker that ended): forget it, release it, and say that nothing is loaded now. */
-  #invalidate(models: LoadedModels): void {
-    if (this.#loaded !== models) return; // a newer load has already replaced it
-    this.#loaded = undefined;
-    this.#reloadNeeded = true;
-    this.#unloading = (async () => {
-      try {
-        await models.unload?.();
-      } catch {
-        // releasing an adapter that is already gone is not an error worth showing
-      }
-    })();
-    this.#set((s) =>
-      s.model.status === 'ready' ? { ...s, model: { ...s.model, status: 'cached' } } : s,
-    );
-  }
-
-  /**
-   * Runs `use` on the loaded models. An abort ends the engine, so the models are marked as not loaded; a 'not_loaded' (the engine was ended earlier,
-   * or its worker crashed) is re-loaded ONCE and retried. A re-load that fails throws its own reason (manifest_refused, integrity, or
-   * model_not_cached only when a file is really missing); a not_loaded that survives the one re-load is a plain failure, never 'not downloaded'.
-   */
-  async #useModels<T>(
-    use: (m: LoadedModels) => Promise<T>,
-    endedBy?: (result: T) => boolean,
-  ): Promise<T> {
-    let m = await this.#getModels();
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const result = await use(m);
-        if (endedBy?.(result) === true) this.#invalidate(m);
-        return result;
-      } catch (e) {
-        if (isAdapterError(e, 'aborted')) {
-          this.#invalidate(m);
-          throw e;
-        }
-        if (isAdapterError(e, 'not_loaded') && attempt === 0) {
-          this.#invalidate(m);
-          m = await this.#getModels();
-          continue;
-        }
-        throw e;
-      }
+    } else if (state.phase === 'ready') {
+      this.#set((s) => ({ ...s, model: { ...s.model, status: 'ready', reloading: false } }));
+    } else if (state.phase === 'idle') {
+      this.#set((s) =>
+        s.model.status === 'ready' ? { ...s, model: { ...s.model, status: 'cached' } } : s,
+      );
+    } else {
+      const r = mapAdapterError(state.error);
+      const info = refusalInfo(r) ?? {
+        reason: 'failed' as const,
+        message: 'The model could not be loaded.',
+      };
+      this.#set((s) => ({
+        ...s,
+        model: {
+          ...s.model,
+          status: info.reason === 'model_not_cached' ? 'absent' : 'refused',
+          reloading: false,
+          refusal: info,
+        },
+      }));
     }
   }
 
@@ -409,15 +378,7 @@ export class AppController {
     this.#pipeline ??= (this.#deps.makePipeline ?? createPipeline)({
       ...this.#deps.pipelineDeps,
       events: this.#deps.events,
-      specialTokens: () => this.#loaded?.specialTokens ?? DEFAULT_SPECIAL_TOKENS,
-      embedder: { embed: (t, o) => this.#useModels((m) => m.embedder.embed(t, o)) },
-      generator: {
-        generate: (p, o) =>
-          this.#useModels(
-            (m) => m.generator.generate(p, o),
-            (r) => r.finishReason === 'abort', // the worker host terminated the engine worker
-          ),
-      },
+      models: this.#pool,
     });
     return this.#pipeline;
   }

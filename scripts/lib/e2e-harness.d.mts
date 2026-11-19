@@ -14,7 +14,7 @@ export function startServer(o: { dist?: string; port: number; prefix?: string })
 export function launch(
   playwright: any,
   o: { profileDir: string; headless?: boolean; watch?: boolean },
-): Promise<{ ctx: any; page: any; ledger: any; close(): Promise<void> }>;
+): Promise<{ ctx: any; page: any; cdp: any; ledger: any; close(): Promise<void> }>;
 export function goOffline(ctx: any): Promise<void>;
 export function chromeVersion(page: any): Promise<string>;
 export function waitReady(page: any, base: string, o?: { timeout?: number }): Promise<void>;
@@ -55,7 +55,11 @@ export function askThenStop(
 export function watchModelReload(page: any): Promise<void>;
 export function modelReloadResult(
   page: any,
-): Promise<{ sawLoading: boolean; text: string; ms: number | null }>;
+): Promise<{ sawLoading: boolean; text: string; ms: number | null; loads: number }>;
+export function sampleWorkerTargets(
+  cdp: any,
+  o?: { intervalMs?: number },
+): { stop(): Promise<{ at: number; workers: number; serviceWorkers: number }[]> };
 export function readEvents(page: any): Promise<any[]>;
 export function stageTimings(events: any[], sinceTs?: number): Record<string, any>;
 export function wasmMemoryPeak(events: any[]): number | null;

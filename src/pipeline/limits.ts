@@ -14,7 +14,7 @@ export const CHUNK_MAX_PAGES = 2;
 /** A chunk of at least this many units is closed at a page boundary, so a citation names the page the text is on. */
 export const CHUNK_PAGE_BREAK_MIN = 200;
 
-export const EMBED_BATCH = 32;
+export const EMBED_BATCH = 8; // B1 M4 (TD-66): was 32; kept only if the fixed question set and top_retrieved_page_ok are unchanged in the after-run
 export const TOP_K = 4;
 export const SOURCE_UNITS = 700;
 export const QUESTION_UNITS = 500;

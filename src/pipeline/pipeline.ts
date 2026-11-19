@@ -4,6 +4,7 @@ import {
   type BackendAdapter,
   type GenerateResult,
 } from '../contracts/backend-adapter.ts';
+import type { ModelPool } from '../model/model-pool.ts';
 import type { EventSink } from '../contracts/event.ts';
 import type { ChunkInput, StorageApi } from '../contracts/storage-api.ts';
 import { StorageError } from '../contracts/storage-api.ts';
@@ -20,7 +21,7 @@ import { newEvent } from './events.ts';
 import { gateChunks, type GatedChunk, type GateVerdict, type WorkerGate } from './gate.ts';
 import { CONTEXT_RETRIES, EMBED_BATCH, MAX_TOKENS, TOP_K } from './limits.ts';
 import { buildPrompt } from './prompt.ts';
-import { readPdf } from './read.ts';
+import { readPdf, sha256Hex } from './read.ts';
 import { Refusal, isRefusal, type PipelineReason, type PipelineStage } from './reasons.ts';
 import { routePages, type StructureReport } from './route.ts';
 
@@ -30,8 +31,14 @@ export const KEPT_NS = 'dockit.kept';
 export const DOC_TITLE = 'document';
 
 export interface AnalysisPort {
-  /** pagetriage in the analysis worker: the parsed structure report, and the worker's peak wasm memory when it could be measured. */
-  triage(bytes: Uint8Array): Promise<{ report: StructureReport; peakWasmBytes: number | null }>;
+  /**
+   * pagetriage in the analysis worker: the parsed structure report, and the worker's peak wasm memory when it could be measured. The bytes
+   * are TRANSFERRED to the worker (not copied) and handed back in `bytes`: the caller must not use its own reference afterwards, and the
+   * pipeline checks that what comes back is what was read (B1 M3).
+   */
+  triage(
+    bytes: Uint8Array,
+  ): Promise<{ report: StructureReport; peakWasmBytes: number | null; bytes: Uint8Array }>;
   /** glyphsift gate() in the analysis worker: one verdict per text, or null where the gate refused or failed. */
   gate(texts: string[]): Promise<(WorkerGate | null)[]>;
 }
@@ -42,12 +49,14 @@ export interface PipelineDeps {
   store: StorageApi;
   /** The OPFS-backed store, opened only when a document is kept ('Keep on this device'). */
   persistent?: () => Promise<StorageApi>;
-  embedder: Pick<BackendAdapter, 'embed'>;
-  generator: Pick<BackendAdapter, 'generate'>;
+  /**
+   * The engines (B1 M1, TD-66): one at a time. An ingest holds one embedder lease across its batches; a question leases the embedder for the
+   * question and then the generator for the answer, and each lease ends (the engine is unloaded) before the next begins. The special tokens
+   * for the prompt sanitiser come with the generator lease (the tokenizer that was just loaded).
+   */
+  models: ModelPool;
   analysis: AnalysisPort;
   extract: (bytes: Uint8Array, pages: number[]) => Promise<ExtractResult>;
-  /** Special and added token strings of the loaded tokenizer, for the prompt sanitiser (a function: they are known once the model is loaded). */
-  specialTokens: readonly string[] | (() => readonly string[]);
   now?: () => number;
 }
 
@@ -154,6 +163,7 @@ export type AdapterOutcome =
  *   before this can reach the user; model_not_cached is shown only when that load says a file is really missing (not_cached below, or no stored
  *   manifest).
  * - aborted is the user's own Stop: neither a refusal nor an error.
+ * - out_of_memory is its own plain refusal (B1, backend adapter R18): the engine could not allocate, its worker was ended and nothing is retried.
  */
 export const ADAPTER_OUTCOMES: Readonly<Record<AdapterErrorCode, AdapterOutcome>> = Object.freeze({
   not_loaded: { kind: 'failed' },
@@ -167,6 +177,7 @@ export const ADAPTER_OUTCOMES: Readonly<Record<AdapterErrorCode, AdapterOutcome>
   integrity: { kind: 'refusal', reason: 'integrity' },
   context_overflow: { kind: 'refusal', reason: 'context_overflow' },
   not_cached: { kind: 'refusal', reason: 'model_not_cached' },
+  out_of_memory: { kind: 'refusal', reason: 'out_of_memory' },
 });
 
 /** The outcome of an adapter error, or undefined when `e` is not one (or carries a code this build does not know). */
@@ -253,11 +264,14 @@ export function createPipeline(deps: PipelineDeps): Pipeline {
    * and the caller holds it. A failure that is not about one text (a refusal such as integrity or an unsupported profile, an abort) stops
    * everything, and when no text at all could be embedded the first error is rethrown rather than returning an empty index.
    */
-  async function embedAll(texts: string[]): Promise<(Float32Array | null)[]> {
+  async function embedAll(
+    embedder: Pick<BackendAdapter, 'embed'>,
+    texts: string[],
+  ): Promise<(Float32Array | null)[]> {
     const out: (Float32Array | null)[] = [];
     let first: unknown;
     const one = async (batch: string[]): Promise<Float32Array[]> => {
-      const r = await deps.embedder.embed(batch);
+      const r = await embedder.embed(batch);
       if (r.vectors.length !== batch.length) throw new Error('embed: one vector per text expected');
       return r.vectors;
     };
@@ -322,33 +336,60 @@ export function createPipeline(deps: PipelineDeps): Pipeline {
       () => readPdf(file),
       () => ({ bytes: file.size }),
     );
+    // The bytes are read once. Their length and sha256 are recorded here; the one buffer goes to the analysis worker by transfer and comes back,
+    // and the extract stage re-checks it, so what pagetriage judged is what pdf.js opens (B1 M3). The File is never read again.
+    const readLength = read.bytes.byteLength;
+    let held: Uint8Array | undefined = read.bytes;
+    const emitAnalysisMemory = (peakWasmBytes: number | null): void =>
+      events.emit(
+        newEvent({
+          source: EVENT_SOURCE,
+          kind: 'memory',
+          name: 'pipeline.memory',
+          level: 'info',
+          ...(peakWasmBytes === null ? {} : { bytes: peakWasmBytes }),
+          attrs: {
+            worker: 'analysis',
+            stage: 'triage',
+            measure: peakWasmBytes === null ? 'unavailable' : 'wasm-memory',
+          },
+        }),
+      );
     const tri = await stage(
       'triage',
       async () => {
-        const r = await deps.analysis.triage(read.bytes.slice());
+        let r: Awaited<ReturnType<AnalysisPort['triage']>>;
+        try {
+          r = await deps.analysis.triage(held!);
+        } catch (e) {
+          // a file the stream accounting refused (S1-107) still tells how much memory the worker needed to say so
+          if (isRefusal(e) && e.detail !== undefined && 'peakWasmBytes' in e.detail) {
+            const peak = e.detail['peakWasmBytes'];
+            emitAnalysisMemory(typeof peak === 'number' ? peak : null);
+          }
+          throw e;
+        }
+        held = r.bytes;
         return { ...r, route: routePages(r.report) };
       },
       (r) => ({ pages: r.report.document.pages }),
       true,
     );
-    events.emit(
-      newEvent({
-        source: EVENT_SOURCE,
-        kind: 'memory',
-        name: 'pipeline.memory',
-        level: 'info',
-        ...(tri.peakWasmBytes === null ? {} : { bytes: tri.peakWasmBytes }),
-        attrs: {
-          worker: 'analysis',
-          stage: 'triage',
-          measure: tri.peakWasmBytes === null ? 'unavailable' : 'wasm-memory',
-        },
-      }),
-    );
+    emitAnalysisMemory(tri.peakWasmBytes);
     const pageCount = tri.report.document.pages;
     const extracted = await stage(
       'extract',
-      () => deps.extract(read.bytes, tri.route.extract),
+      async () => {
+        if (
+          held === undefined ||
+          held.byteLength !== readLength ||
+          (await sha256Hex(held)) !== read.sha256
+        )
+          throw new Refusal('corrupt'); // not the bytes that were read and judged
+        const bytes = held;
+        held = undefined; // dropped once handed on; nothing keeps the PDF after its text is out
+        return deps.extract(bytes, tri.route.extract);
+      },
       (r) => ({ pages: r.pages.length }),
       true,
     );
@@ -389,7 +430,13 @@ export function createPipeline(deps: PipelineDeps): Pipeline {
 
     const vectors = await stage(
       'embed',
-      () => embedAll(gated.kept.map((c) => `passage: ${c.text}`)),
+      () =>
+        deps.models.useEmbedder((embedder) =>
+          embedAll(
+            embedder,
+            gated.kept.map((c) => `passage: ${c.text}`),
+          ),
+        ),
       (v) => ({ chunks: v.filter((x) => x !== null).length }),
     );
     // a passage the embedder refused on its own is set aside (not indexed) and reported; the document goes on
@@ -423,7 +470,7 @@ export function createPipeline(deps: PipelineDeps): Pipeline {
             docId: read.docId,
             title: DOC_TITLE,
             sha256: read.sha256,
-            bytes: read.bytes.byteLength,
+            bytes: readLength,
             pages: pageCount,
           },
           embedded,
@@ -454,7 +501,7 @@ export function createPipeline(deps: PipelineDeps): Pipeline {
   async function ask(question: string, opts: AskOptions): Promise<Answer> {
     const t0 = now();
     const answerEvent = (
-      outcome: 'ok' | 'refused' | 'error' | 'skipped',
+      outcome: 'ok' | 'refused' | 'error' | 'aborted',
       reason: PipelineReason | '',
       extra: {
         k?: number;
@@ -469,7 +516,7 @@ export function createPipeline(deps: PipelineDeps): Pipeline {
           source: EVENT_SOURCE,
           kind: 'timing',
           name: 'pipeline.answer',
-          level: outcome === 'ok' ? 'info' : 'warn',
+          level: outcome === 'ok' || outcome === 'aborted' ? 'info' : 'warn',
           durationMs: now() - t0,
           attrs: {
             outcome,
@@ -492,7 +539,9 @@ export function createPipeline(deps: PipelineDeps): Pipeline {
       const hits = await stage(
         'retrieve',
         async () => {
-          const { vectors } = await deps.embedder.embed([`query: ${question}`]);
+          const { vectors } = await deps.models.useEmbedder((embedder) =>
+            embedder.embed([`query: ${question}`]),
+          );
           return (homes.get(doc.docId) ?? memory).queryChunks(doc.ns, vectors[0]!, TOP_K, {
             docId: doc.docId,
           });
@@ -508,42 +557,43 @@ export function createPipeline(deps: PipelineDeps): Pipeline {
         text: h.text,
       }));
       const g0 = now();
-      const result = await (async () => {
-        for (let attempt = 0; ; attempt++) {
-          const { messages } = buildPrompt({
-            question,
-            sources: sources.map((s) => ({ id: s.id, page: s.pageStart, text: s.text })),
-            specialTokens:
-              typeof deps.specialTokens === 'function' ? deps.specialTokens() : deps.specialTokens,
-          });
-          try {
-            return await deps.generator.generate(messages, {
-              maxTokens: MAX_TOKENS,
-              temperature: 0,
-              ...(opts.signal === undefined ? {} : { signal: opts.signal }),
-              ...(opts.onToken === undefined ? {} : { onToken: opts.onToken }),
+      const result = await deps.models
+        .useGenerator(async (generator, ctx) => {
+          for (let attempt = 0; ; attempt++) {
+            const { messages } = buildPrompt({
+              question,
+              sources: sources.map((s) => ({ id: s.id, page: s.pageStart, text: s.text })),
+              specialTokens: ctx.specialTokens,
             });
-          } catch (e) {
-            const overflow = isAdapterError(e, 'context_overflow');
-            if (!overflow) throw e;
-            if (attempt >= CONTEXT_RETRIES || sources.length <= 1)
-              throw new Refusal('context_overflow');
-            sources = sources.slice(0, -1); // drop the lowest-ranked source and retry
+            try {
+              return await generator.generate(messages, {
+                maxTokens: MAX_TOKENS,
+                temperature: 0,
+                ...(opts.signal === undefined ? {} : { signal: opts.signal }),
+                ...(opts.onToken === undefined ? {} : { onToken: opts.onToken }),
+              });
+            } catch (e) {
+              const overflow = isAdapterError(e, 'context_overflow');
+              if (!overflow) throw e;
+              if (attempt >= CONTEXT_RETRIES || sources.length <= 1)
+                throw new Refusal('context_overflow');
+              sources = sources.slice(0, -1); // drop the lowest-ranked source and retry
+            }
           }
-        }
-      })().then(
-        (r) => {
-          emitStage('generate', 'ok', '', now() - g0, { chunks: sources.length });
-          return r;
-        },
-        (e) => {
-          const m = mapAdapterError(e);
-          if (isRefusal(m)) emitStage('generate', 'refused', m.reason, now() - g0);
-          else if (isAdapterError(m, 'aborted')) emitStage('generate', 'skipped', '', now() - g0);
-          else emitStage('generate', 'error', '', now() - g0);
-          throw m;
-        },
-      );
+        })
+        .then(
+          (r) => {
+            emitStage('generate', 'ok', '', now() - g0, { chunks: sources.length });
+            return r;
+          },
+          (e) => {
+            const m = mapAdapterError(e);
+            if (isRefusal(m)) emitStage('generate', 'refused', m.reason, now() - g0);
+            else if (isAdapterError(m, 'aborted')) emitStage('generate', 'skipped', '', now() - g0);
+            else emitStage('generate', 'error', '', now() - g0);
+            throw m;
+          },
+        );
       const { cited, unknownCitations } = parseCitations(result.text, sources);
       const answer: Answer = {
         text: result.text,
@@ -557,7 +607,8 @@ export function createPipeline(deps: PipelineDeps): Pipeline {
         finishReason: result.finishReason,
         budget: result.budget ?? MAX_TOKENS,
       };
-      answerEvent('ok', '', {
+      // S1-119: a Stop after the first token is the user's choice (event 0.1.5 outcome 'aborted'), not a completed answer
+      answerEvent(result.finishReason === 'abort' ? 'aborted' : 'ok', '', {
         sources: sources.length,
         budget: answer.budget,
         firstTokenMs: answer.firstTokenMs,
@@ -567,7 +618,7 @@ export function createPipeline(deps: PipelineDeps): Pipeline {
     } catch (e) {
       if (isRefusal(e)) answerEvent('refused', e.reason, {});
       else if (isAdapterError(e, 'aborted'))
-        answerEvent('skipped', '', {}); // the user's own Stop before the first token: not a failure
+        answerEvent('aborted', '', {}); // BUG-T1-S6-03: the user's own Stop before the first token: 'aborted' (in PIPELINE_ANSWER_OUTCOMES), never 'skipped'; no firstTokenMs
       else answerEvent('error', '', {});
       throw e;
     }
