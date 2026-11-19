@@ -1,3 +1,21 @@
 export function parseCsv(text: string): Record<string, string>[];
-export function table(e2eText?: string, questionsText?: string): string;
+/** The README block: the before and after comparison (when a baseline pair is given or found), then the per-CSV table. `null` leaves the comparison out. */
+export function table(
+  e2eText?: string,
+  questionsText?: string,
+  baseline?: [string, string] | null,
+): string;
+/** The before and after table of the memory hardening and the computed outcome of the TD-66 target, from the two CSV pairs' text. */
+export function memoryComparison(
+  baseE2e: string,
+  baseQuestions: string,
+  afterE2e: string,
+  afterQuestions: string,
+): string;
+export const TARGET: Readonly<{
+  rssMedianMiB: number;
+  totalMedianMs: number;
+  questionAllMin: number;
+  questionFirstRunMin: number;
+}>;
 export function apply(readme: string, block: string): string;

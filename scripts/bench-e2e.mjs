@@ -12,7 +12,7 @@
 //
 // Columns of docs/benchmarks/e2e.csv (or $DOCKIT_BENCH_CSV): date, machine, chrome, commit, run, restart, pdf, pages, chunks, held,
 // triage_ms, extract_ms, gate_ms, embed_ms, index_ms, retrieve_ms, first_token_ms, total_ms, out_tokens, tokens_per_s, js_heap_peak_bytes,
-// wasm_memory_peak_bytes, process_rss_peak_bytes, storage_usage_bytes, requests_after_offline, model, backend, answer_ok, laptop_8gb.
+// wasm_memory_peak_bytes, process_rss_peak_bytes, storage_usage_bytes, requests_after_offline, model, backend, answer_ok, laptop_8gb, host_load_1m_start, host_load_1m_end (the two load columns are the 1-minute os.loadavg() at the start and end of the run).
 // Three memory figures, each under its own name (TD-49): process_rss_peak_bytes (the peak summed size of the Chrome process tree: THE peak
 // memory), js_heap_peak_bytes (main-thread JS heap) and wasm_memory_peak_bytes (the engine and analysis workers' WebAssembly memory, empty
 // when any of them was not measurable). Nothing is estimated and no run is selected: every run is written.
@@ -25,10 +25,18 @@
 // Not measured on 8 GB: the figures are those of the machine named in each row. This script has never run on Windows; the first run there
 // is the owner's (PLAN.md runbook step 5). If it fails, send back the console log, both CSVs even if partial, the Chrome version and the
 // Task Manager reading (Details, chrome.exe, memory columns).
+import { loadavg } from 'node:os';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { chromium } from 'playwright';
-import { csv, E2E_COLUMNS, LAPTOP_8GB, pageChecks, Q_COLUMNS } from './lib/bench-columns.mjs';
+import {
+  csv,
+  E2E_COLUMNS,
+  hostLoad,
+  LAPTOP_8GB,
+  pageChecks,
+  Q_COLUMNS,
+} from './lib/bench-columns.mjs';
 import * as h from './lib/e2e-harness.mjs';
 
 const args = process.argv.slice(2);
@@ -69,6 +77,7 @@ console.log(`bench-e2e: ${machine}, commit ${commit}, serving ${srv.base}, profi
 
 async function runOne(session, run, restart) {
   const { page, ledger } = session;
+  const loadStart = hostLoad(loadavg()[0]); // 1-minute load average, BUG-T1-S6-05
   const rss = h.startRss(profile);
   const heap = h.sampleJsHeap(page);
   const t0 = Date.now() - 1; // events carry epoch milliseconds
@@ -143,6 +152,8 @@ async function runOne(session, run, restart) {
     backend: gen ? 'transformers-js wasm (single-threaded)' : '',
     answer_ok: q1.ok,
     laptop_8gb: LAPTOP_8GB,
+    host_load_1m_start: loadStart,
+    host_load_1m_end: hostLoad(loadavg()[0]),
   });
   console.log(
     `run ${run}${restart ? ' (after a Chrome restart)' : ''}: q1 first token ${q1.a.firstTokenMs} ms, total ${q1.a.totalMs} ms, requests after offline ${rows.at(-1).requests_after_offline}, process RSS peak ${rssPeak.peakBytes ?? 'n/a'} bytes (${rssPeak.samples} samples)`,
