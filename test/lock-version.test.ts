@@ -7,10 +7,10 @@ const root = join(import.meta.dirname, '..');
 const json = (f: string) => JSON.parse(readFileSync(join(root, f), 'utf8')) as Record<string, any>;
 
 describe('package-lock.json root version', () => {
-  it('both root version fields equal package.json (0.2.0-dev, TD-43)', () => {
+  it('both root version fields equal package.json (0.3.0-dev, TD-43, TD-69)', () => {
     const pkg = json('package.json');
     const lock = json('package-lock.json');
-    expect(pkg.version).toBe('0.2.0-dev');
+    expect(pkg.version).toBe('0.3.0-dev');
     expect(lock.version).toBe(pkg.version);
     expect(lock.packages[''].version).toBe(pkg.version);
     expect(lock.name).toBe(pkg.name);

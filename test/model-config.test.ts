@@ -80,9 +80,9 @@ function setup(all: SetupOpts = {}) {
     },
     trust: new Map([['k', new Uint8Array(32)]]),
     events: sink,
-    loadAdapters: async (m, _a, o) => {
+    loadAdapter: async (_kind, _m, _a, o) => {
       calls.loadAdapters.push(o);
-      return { generator: {} as never, embedder: {} as never, specialTokens: ['<|im_end|>'] };
+      return { adapter: {} as never, specialTokens: ['<|im_end|>'], unload: async () => undefined };
     },
     ...over,
   } as ModelServiceDeps;
@@ -215,8 +215,8 @@ describe('model service: download', () => {
 describe('model service: load (S-OFF-1, the stored manifest is re-verified on every load)', () => {
   it('re-verifies the stored manifest bytes on every load and loads the adapters with cacheOnly', async () => {
     const { svc, calls } = setup({ stored: manifestBytes() });
-    await svc.load();
-    await svc.load();
+    await svc.load('generator');
+    await svc.load('generator');
     expect(calls.loadManifest).toHaveLength(2);
     expect(calls.fetchManifest).toBe(0);
     expect(calls.loadAdapters).toEqual([{ cacheOnly: true }, { cacheOnly: true }]);
@@ -224,7 +224,7 @@ describe('model service: load (S-OFF-1, the stored manifest is re-verified on ev
 
   it('no stored manifest is model_not_cached', async () => {
     const { svc } = setup();
-    await expect(svc.load()).rejects.toMatchObject({ reason: 'model_not_cached' });
+    await expect(svc.load('generator')).rejects.toMatchObject({ reason: 'model_not_cached' });
   });
 
   it('online, a stored manifest that fails verification is discarded and refetched', async () => {
@@ -243,7 +243,7 @@ describe('model service: load (S-OFF-1, the stored manifest is re-verified on ev
         has: async () => true,
       } as never,
     });
-    await svc.load();
+    await svc.load('generator');
     expect(calls.fetchManifest).toBe(1);
     expect(stored.get(ID)).toEqual(manifestBytes());
   });
@@ -262,7 +262,7 @@ describe('model service: load (S-OFF-1, the stored manifest is re-verified on ev
         has: async () => true,
       } as never,
     });
-    await expect(svc.load()).rejects.toMatchObject({
+    await expect(svc.load('generator')).rejects.toMatchObject({
       reason: 'manifest_refused',
       detail: { reason: 'no_valid_signature' },
     });
@@ -276,7 +276,7 @@ describe('model service: load (S-OFF-1, the stored manifest is re-verified on ev
     const { svc, calls } = setup({
       online: false,
       stored: tampered,
-      loadAdapters: loadAdapters as never,
+      loadAdapter: loadAdapters as never,
       assets: {
         loadManifest: async () => {
           throw Object.assign(new Error('x'), { reason: 'no_valid_signature' });
@@ -285,7 +285,7 @@ describe('model service: load (S-OFF-1, the stored manifest is re-verified on ev
         has: async () => true,
       } as never,
     });
-    await expect(svc.load()).rejects.toMatchObject({
+    await expect(svc.load('generator')).rejects.toMatchObject({
       reason: 'manifest_refused',
       detail: { reason: 'no_valid_signature' },
     });
@@ -295,7 +295,7 @@ describe('model service: load (S-OFF-1, the stored manifest is re-verified on ev
 
   it('a stored manifest whose entries leave models/ is refused too (the stored bytes are re-checked like fetched ones)', async () => {
     const { svc } = setup({ online: false, stored: manifestBytes([entry('a.onnx', '../x.onnx')]) });
-    await expect(svc.load()).rejects.toMatchObject({
+    await expect(svc.load('generator')).rejects.toMatchObject({
       reason: 'manifest_refused',
       detail: { reason: 'path_prefix' },
     });
@@ -305,33 +305,33 @@ describe('model service: load (S-OFF-1, the stored manifest is re-verified on ev
     const { svc } = setup({
       online: false,
       stored: manifestBytes(),
-      loadAdapters: async () => {
+      loadAdapter: async () => {
         throw Object.assign(new Error('not cached'), { name: 'AdapterError', code: 'not_cached' });
       },
     });
-    await expect(svc.load()).rejects.toMatchObject({ reason: 'model_not_cached' });
+    await expect(svc.load('generator')).rejects.toMatchObject({ reason: 'model_not_cached' });
   });
 
   it('an AssetError from the asset manager (a file not stored in full) is model_not_cached too', async () => {
     const { svc } = setup({
       online: false,
       stored: manifestBytes(),
-      loadAdapters: async () => {
+      loadAdapter: async () => {
         throw Object.assign(new Error('not stored'), { name: 'AssetError', code: 'not_cached' });
       },
     });
-    await expect(svc.load()).rejects.toMatchObject({ reason: 'model_not_cached' });
+    await expect(svc.load('generator')).rejects.toMatchObject({ reason: 'model_not_cached' });
   });
 
   it('a not_loaded from the adapter is NOT a missing model (BUG-T1-S5-R2-01): it is passed on as it is, never as model_not_cached', async () => {
     const { svc } = setup({
       online: false,
       stored: manifestBytes(),
-      loadAdapters: async () => {
+      loadAdapter: async () => {
         throw Object.assign(new Error('ended'), { name: 'AdapterError', code: 'not_loaded' });
       },
     });
-    const err = await svc.load().catch((e: unknown) => e);
+    const err = await svc.load('generator').catch((e: unknown) => e);
     expect(err).toMatchObject({ name: 'AdapterError', code: 'not_loaded' });
     expect(err).not.toBeInstanceOf(Refusal);
   });
@@ -342,26 +342,26 @@ describe('model service: load (S-OFF-1, the stored manifest is re-verified on ev
       let attempts = 0;
       const { svc } = setup({
         stored: manifestBytes(),
-        loadAdapters: async () => {
+        loadAdapter: async () => {
           attempts++;
           if (attempts === 1)
             throw Object.assign(new Error('engine'), { name: 'AdapterError', code: 'backend' });
-          return { generator: {} as never, embedder: {} as never, specialTokens: [] };
+          return { adapter: {} as never, specialTokens: [], unload: async () => undefined };
         },
       });
-      const p = svc.load();
+      const p = svc.load('generator');
       await vi.advanceTimersByTimeAsync(1600);
       await expect(p).resolves.toBeDefined();
       expect(attempts).toBe(2);
       let tries = 0;
       const b = setup({
         stored: manifestBytes(),
-        loadAdapters: async () => {
+        loadAdapter: async () => {
           tries++;
           throw Object.assign(new Error('x'), { name: 'AdapterError', code: 'integrity' });
         },
       });
-      const q = b.svc.load();
+      const q = b.svc.load('generator');
       const asserted = expect(q).rejects.toMatchObject({ reason: 'integrity' });
       await vi.advanceTimersByTimeAsync(5000);
       await asserted;
@@ -369,12 +369,12 @@ describe('model service: load (S-OFF-1, the stored manifest is re-verified on ev
       let backendTries = 0;
       const c = setup({
         stored: manifestBytes(),
-        loadAdapters: async () => {
+        loadAdapter: async () => {
           backendTries++;
           throw Object.assign(new Error('engine'), { name: 'AdapterError', code: 'backend' });
         },
       });
-      const r = c.svc.load();
+      const r = c.svc.load('generator');
       const failed = expect(r).rejects.toMatchObject({ code: 'backend' });
       await vi.advanceTimersByTimeAsync(5000);
       await failed;

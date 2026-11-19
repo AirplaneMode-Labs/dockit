@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -106,5 +106,33 @@ describe('TD-58: the committed trust-root stub carries no real key', () => {
   it('a generated trust root and the sibling checkout folder stay ignored', () => {
     expect(ignored('src/generated/trust-root.ts')).toBe(0);
     expect(ignored('deps/x')).toBe(0);
+  });
+});
+
+// S1-107: the bombs are generated into the system temp folder at test time and never committed; nothing big is tracked either.
+describe('no bomb or oversize file is in the repository', () => {
+  const tracked = spawnSync('git', ['-C', root, 'ls-files', '-co', '--exclude-standard'], {
+    encoding: 'utf8',
+  })
+    .stdout.split('\n')
+    .filter(Boolean);
+  it('no tracked or untracked-but-not-ignored file is named like a bomb, and none is over 5 MB', () => {
+    expect(tracked.length).toBeGreaterThan(50);
+    expect(
+      tracked.filter((f) => /bomb/i.test(f.split('/').pop() ?? '') && !/\.(ts|mjs|md)$/.test(f)),
+    ).toEqual([]);
+    const big = tracked.filter((f) => {
+      try {
+        return statSync(join(root, f)).size > 5 * 1024 * 1024;
+      } catch {
+        return false;
+      }
+    });
+    expect(big).toEqual([]);
+  });
+  it('the generated PDFs are written to the system temp folder, never inside the repository', () => {
+    const e2e = readFileSync(join(root, 'test', 'e2e.spec.ts'), 'utf8');
+    expect(e2e).toMatch(/mkdtempSync\(join\(tmpdir\(\), 'dockit-e2e-'\)\)/);
+    expect(e2e).not.toMatch(/writeFileSync\(join\(FIX,/);
   });
 });

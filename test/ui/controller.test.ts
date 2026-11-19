@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { AdapterError, type AdapterErrorCode } from '../../src/contracts/backend-adapter.ts';
 import { AppController, type ControllerDeps } from '../../src/app/controller.ts';
 import { EventLog } from '../../src/pipeline/events.ts';
-import type { Answer, OpenedDocument, Pipeline } from '../../src/pipeline/pipeline.ts';
+import type {
+  Answer,
+  OpenedDocument,
+  Pipeline,
+  PipelineDeps,
+} from '../../src/pipeline/pipeline.ts';
 import { Refusal } from '../../src/pipeline/reasons.ts';
 import type { ModelService } from '../../src/model/model-service.ts';
 
@@ -37,13 +42,14 @@ function setup(
     pipeline?: Partial<Pipeline>;
     models?: Partial<ModelService>;
     online?: boolean;
+    ramGb?: number;
   } = {},
 ) {
   const events = new EventLog();
   const loadSpy = vi.fn(async () => ({
-    generator: { generate: vi.fn() },
-    embedder: { embed: vi.fn() },
+    adapter: { generate: vi.fn() } as never,
     specialTokens: ['<|im_end|>'],
+    unload: async () => undefined,
     manifest: { entries: [] },
   }));
   const models: ModelService = {
@@ -54,6 +60,7 @@ function setup(
     load: loadSpy as never,
     status: vi.fn(async () => ({ cached: true })),
     plannedBytes: vi.fn(async () => 300),
+    memoryLine: vi.fn(async () => 4),
     ...over.models,
   };
   const pipeline: Pipeline = {
@@ -75,10 +82,7 @@ function setup(
       analysis: {} as never,
       extract: async () => ({ pages: [], skipped: [], truncated: false }),
     },
-    detectCapability: async () => ({
-      profile: { gpu: 'none', ramGb: 8 } as never,
-      verdict: 'meets',
-    }),
+    detectCapability: async () => ({ profile: { gpu: 'none', ramGb: over.ramGb ?? 8 } as never }),
     online: () => over.online ?? true,
   };
   const c = new AppController(deps);
@@ -99,6 +103,40 @@ describe('app controller', () => {
     expect(s.capability.note).not.toMatch(/cap/i);
     expect(s.capability.note).not.toMatch(/8 GB/);
     expect(s.model).toMatchObject({ status: 'cached', plannedBytes: 300 });
+  });
+
+  // B1 M6 (TD-67, TD-84): the verdict is the memory line read from the verified manifest, never a constant in the page
+  it('the capability verdict is the memory line of the verified manifest: at or above it meets, below it is below, unknown is neither', async () => {
+    const meets = setup({ ramGb: 8 });
+    await meets.c.init();
+    expect(meets.c.getState().capability).toMatchObject({
+      verdict: 'meets',
+      memory: { kind: 'meets', reportedGb: 8, requiredGb: 4 },
+    });
+    const below = setup({ ramGb: 2 });
+    await below.c.init();
+    expect(below.c.getState().capability).toMatchObject({
+      verdict: 'below',
+      memory: { kind: 'below', reportedGb: 2, requiredGb: 4 },
+    });
+    // the line follows the manifest: a manifest that says 2 makes a device that reports 2 meet it
+    const two = setup({ ramGb: 2, models: { memoryLine: async () => 2 } });
+    await two.c.init();
+    expect(two.c.getState().capability.verdict).toBe('meets');
+    // TD-84: a browser that does not report its memory is not below the line
+    const unknown = setup({ ramGb: 0 });
+    await unknown.c.init();
+    expect(unknown.c.getState().capability).toMatchObject({
+      verdict: 'unknown',
+      memory: { kind: 'unknown', requiredGb: 4 },
+    });
+    // no verified manifest yet: no line, no verdict
+    const none = setup({ ramGb: 2, models: { memoryLine: async () => undefined } });
+    await none.c.init();
+    expect(none.c.getState().capability).toMatchObject({
+      verdict: 'unknown',
+      memory: { kind: 'no_line' },
+    });
   });
 
   it('download() aggregates progress over every file and ends cached', async () => {
@@ -313,32 +351,41 @@ describe('app controller', () => {
     expect(pipeline.remove).toHaveBeenCalledWith('k1');
   });
 
-  it('the models are loaded lazily, by the first stage that needs them', async () => {
-    let embed: ((t: string[]) => Promise<unknown>) | undefined;
+  it('the engines are loaded by the stage that needs them, one at a time, and every use is a first load', async () => {
+    let models: PipelineDeps['models'] | undefined;
     const events = new EventLog();
-    const loadSpy = vi.fn(async () => ({
-      generator: {},
-      embedder: {
-        embed: async (t: string[]) => ({
-          vectors: t.map(() => new Float32Array(1)),
-          dims: 1,
-          normalized: true,
-        }),
-      },
-      specialTokens: ['<|x|>'],
-      manifest: { entries: [] },
-    }));
+    let live = 0;
+    let maxLive = 0;
+    const loadSpy = vi.fn(async (kind: string) => {
+      live++;
+      maxLive = Math.max(maxLive, live);
+      return {
+        adapter: {
+          embed: async (t: string[]) => ({
+            vectors: t.map(() => new Float32Array(1)),
+            dims: 1,
+            normalized: true,
+          }),
+        } as never,
+        specialTokens: kind === 'generator' ? ['<|x|>'] : [],
+        unload: async () => {
+          live--;
+        },
+        manifest: { entries: [] },
+      };
+    });
     const c = new AppController({
       framed: false,
       events,
       models: {
         download: async () => undefined,
         load: loadSpy as never,
+        memoryLine: async () => 4,
         status: async () => ({ cached: true }),
         plannedBytes: async () => 1,
       },
       makePipeline: (d) => {
-        embed = d.embedder.embed as never;
+        models = d.models;
         return {
           open: async () => doc(),
           ask: async () => answer(),
@@ -353,32 +400,38 @@ describe('app controller', () => {
         analysis: {} as never,
         extract: async () => ({ pages: [], skipped: [], truncated: false }),
       },
-      detectCapability: async () => ({ profile: {} as never, verdict: 'meets' }),
+      detectCapability: async () => ({ profile: {} as never }),
       online: () => true,
     });
     await c.openFile(file());
     expect(loadSpy).not.toHaveBeenCalled();
-    await embed!(['x']);
-    await embed!(['y']);
-    expect(loadSpy).toHaveBeenCalledTimes(1);
-    expect(c.getState().model.status).toBe('ready');
+    await models!.useEmbedder((e) => e.embed(['x']));
+    await models!.useEmbedder((e) => e.embed(['y']));
+    expect(loadSpy).toHaveBeenCalledTimes(2); // nothing is kept loaded between two uses
+    expect(maxLive).toBe(1);
+    expect(live).toBe(0);
+    expect(c.getState().model.status).toBe('cached'); // on the device, nothing loaded now
   });
 });
 
-// BUG-T1-S5-R2-01 and -02: Stop ends the engine worker (backend adapter R8), so the next question first re-loads the model from the stored,
-// re-verified manifest and the cached files. The fakes below behave the way the worker host does: after an abort the adapter that was stopped
-// is not loaded, and its next generate() rejects 'not_loaded'.
-describe('app controller: Stop, then the next question', () => {
+// BUG-T1-S5-R2-01 and -02, under B1 M1: Stop ends the engine worker (backend adapter R8) and every use unloads its engine, so each question loads the
+// embedder and then the generator from the stored, re-verified manifest and the cached files. The fakes below behave the way the worker host
+// does: after an abort the adapter that was stopped is not loaded, and its next generate() rejects 'not_loaded'.
+describe('app controller: Stop, then the next question (one engine at a time)', () => {
   type Step = 'ok' | 'abort-after-token' | 'abort-before-token' | 'not_loaded' | 'wait-then-abort';
   const crossRealm = (code: string) =>
     Object.assign(new Error(code), { name: 'AdapterError', code });
   const GRACE = 'The grace period is 45 days [S1].';
 
-  class FakeSet {
+  /** One loaded engine (a worker). `steps` is shared: each generate() takes the next step. */
+  class FakeEngine {
     ended = false;
     unloaded = false;
     generateCalls = 0;
-    constructor(readonly steps: Step[]) {}
+    constructor(
+      readonly kind: 'embedder' | 'generator',
+      readonly steps: Step[],
+    ) {}
     readonly embedder = {
       embed: async (t: string[]) => {
         if (this.unloaded) throw new AdapterError('not_loaded', 'embedder');
@@ -415,25 +468,25 @@ describe('app controller: Stop, then the next question', () => {
   }
 
   function engineSetup(opts: {
-    sets: Step[][];
+    steps: Step[];
     loadErrors?: Record<number, unknown>;
-    gate?: Promise<void>[];
+    gate?: (Promise<void> | undefined)[];
   }) {
     const events = new EventLog();
-    const made: FakeSet[] = [];
+    const made: FakeEngine[] = [];
     let loadCalls = 0;
     const gates = opts.gate ?? [];
-    const load = vi.fn(async () => {
+    const steps = opts.steps.slice();
+    const load = vi.fn(async (kind: 'embedder' | 'generator') => {
       const n = ++loadCalls;
       await gates[n - 1];
       if (opts.loadErrors?.[n] !== undefined) throw opts.loadErrors[n];
-      const set = new FakeSet(opts.sets[Math.min(n - 1, opts.sets.length - 1)]!.slice());
-      made.push(set);
+      const e = new FakeEngine(kind, steps);
+      made.push(e);
       return {
-        generator: set.generator,
-        embedder: set.embedder,
+        adapter: (kind === 'embedder' ? e.embedder : e.generator) as never,
         specialTokens: ['<|im_end|>'],
-        unload: set.unload,
+        unload: e.unload,
         manifest: { entries: [] },
       };
     });
@@ -444,6 +497,7 @@ describe('app controller: Stop, then the next question', () => {
       models: {
         download: async () => undefined,
         load: load as never,
+        memoryLine: async () => 4,
         status: async () => ({ cached: true }),
         plannedBytes: async () => 1,
       },
@@ -451,11 +505,13 @@ describe('app controller: Stop, then the next question', () => {
         open: async () => doc(),
         ask: async (q, o) => {
           asked.push(q);
-          await d.embedder.embed([`query: ${q}`]);
-          const r = await d.generator.generate([{ role: 'user', content: q }], {
-            ...(o.signal === undefined ? {} : { signal: o.signal }),
-            ...(o.onToken === undefined ? {} : { onToken: o.onToken }),
-          });
+          await d.models.useEmbedder((e) => e.embed([`query: ${q}`]));
+          const r = await d.models.useGenerator((g) =>
+            g.generate([{ role: 'user', content: q }], {
+              ...(o.signal === undefined ? {} : { signal: o.signal }),
+              ...(o.onToken === undefined ? {} : { onToken: o.onToken }),
+            }),
+          );
           return { ...answer(r.text), finishReason: r.finishReason };
         },
         remove: async () => undefined,
@@ -468,7 +524,7 @@ describe('app controller: Stop, then the next question', () => {
         analysis: {} as never,
         extract: async () => ({ pages: [], skipped: [], truncated: false }),
       },
-      detectCapability: async () => ({ profile: {} as never, verdict: 'meets' }),
+      detectCapability: async () => ({ profile: {} as never }),
       online: () => false, // offline: nothing may be fetched
     });
     const trail: string[] = [];
@@ -484,8 +540,8 @@ describe('app controller: Stop, then the next question', () => {
     expect(f()).toBe(true);
   };
 
-  it('Stop while the answer streams keeps the partial text; the next question re-loads once, from the stored manifest, and answers', async () => {
-    const h = engineSetup({ sets: [['abort-after-token'], ['ok']] });
+  it('Stop while the answer streams keeps the partial text; the next question loads both engines again, from the stored manifest, and answers', async () => {
+    const h = engineSetup({ steps: ['abort-after-token', 'ok'] });
     await h.c.init();
     h.trail.splice(0, h.trail.length, h.c.getState().model.status); // the card's states from here on
     const first = h.c.ask('List every number that appears in the policy and what it means.');
@@ -493,27 +549,47 @@ describe('app controller: Stop, then the next question', () => {
     h.c.stop();
     await first;
     expect(h.c.getState().ask).toMatchObject({ status: 'done', displayText: '4' });
-    expect(h.load).toHaveBeenCalledTimes(1);
-    // the engine that was stopped is released, and the card says the files are on the device but nothing is loaded (not 'ready')
-    expect(h.made[0]!.unload).toHaveBeenCalledTimes(1);
+    expect(h.load.mock.calls.map((c) => c[0])).toEqual(['embedder', 'generator']);
+    // both engines are released, and the card says the files are on the device but nothing is loaded
+    expect(h.made.map((e) => e.unload.mock.calls.length)).toEqual([1, 1]);
     expect(h.c.getState().model.status).toBe('cached');
 
     await h.c.ask('What is the grace period?');
-    expect(h.load).toHaveBeenCalledTimes(2); // the existing load path again: re-verifies the stored manifest, loads from the cache
+    // the existing load path again for each engine: re-verifies the stored manifest, loads from the cache
+    expect(h.load.mock.calls.map((c) => c[0])).toEqual([
+      'embedder',
+      'generator',
+      'embedder',
+      'generator',
+    ]);
     expect(h.c.getState().ask).toMatchObject({
       status: 'done',
       displayText: GRACE,
       refusal: undefined,
     });
-    expect(h.c.getState().model).toMatchObject({ status: 'ready', refusal: undefined });
-    expect(h.trail).toEqual(['cached', 'loading', 'ready', 'cached', 'loading+again', 'ready']);
+    expect(h.c.getState().model).toMatchObject({ status: 'cached', refusal: undefined });
+    expect(h.trail).toEqual([
+      'cached',
+      'loading',
+      'ready',
+      'cached',
+      'loading+again',
+      'ready',
+      'cached',
+      'loading+again',
+      'ready',
+      'cached',
+      'loading+again',
+      'ready',
+      'cached',
+    ]);
   });
 
   it('Stop before the first token is Stopped (no answer text, no refusal); the next question works the same way', async () => {
-    const h = engineSetup({ sets: [['abort-before-token'], ['ok']] });
+    const h = engineSetup({ steps: ['abort-before-token', 'ok'] });
     await h.c.init();
     const first = h.c.ask('What is the grace period?');
-    await until(() => h.made.length === 1 && h.made[0]!.generateCalls === 1);
+    await until(() => h.made.length === 2 && h.made[1]!.generateCalls === 1);
     h.c.stop();
     await first;
     expect(h.c.getState().ask).toMatchObject({
@@ -524,15 +600,15 @@ describe('app controller: Stop, then the next question', () => {
     });
     await h.c.ask('What is the grace period?');
     expect(h.c.getState().ask).toMatchObject({ status: 'done', displayText: GRACE });
-    expect(h.load).toHaveBeenCalledTimes(2);
+    expect(h.load).toHaveBeenCalledTimes(4);
   });
 
-  it('while the model is re-loading the status says so, and a second Ask is ignored until the re-load settles', async () => {
+  it('while an engine is loading the status says so, and a second Ask is ignored until the loads settle', async () => {
     let open: () => void = () => undefined;
-    const second = new Promise<void>((r) => (open = r));
+    const third = new Promise<void>((r) => (open = r));
     const h = engineSetup({
-      sets: [['abort-after-token'], ['ok']],
-      gate: [Promise.resolve(), second],
+      steps: ['abort-after-token', 'ok'],
+      gate: [undefined, undefined, third],
     });
     await h.c.init();
     const first = h.c.ask('q1');
@@ -544,17 +620,17 @@ describe('app controller: Stop, then the next question', () => {
     await until(() => h.c.getState().model.status === 'loading');
     expect(h.c.getState().model.reloading).toBe(true);
     expect(h.c.getState().ask.status).toBe('working');
-    await h.c.ask('a second question while the first waits for the model'); // ignored: Ask is disabled until the re-load settles
+    await h.c.ask('a second question while the first waits for the model'); // ignored: Ask is disabled until the loads settle
     expect(h.asked).toEqual(['q1', 'What is the grace period?']);
     open();
     await again;
     expect(h.c.getState().ask).toMatchObject({ status: 'done', displayText: GRACE });
-    expect(h.load).toHaveBeenCalledTimes(2);
+    expect(h.load).toHaveBeenCalledTimes(4);
   });
 
-  it('a re-load that is refused shows its own reason (manifest_refused, integrity), never "not downloaded"; the next Ask tries again', async () => {
+  it('a load that is refused shows its own reason (manifest_refused, integrity), never "not downloaded"; the next Ask tries again', async () => {
     const refused = new Refusal('manifest_refused', undefined, { reason: 'no_valid_signature' });
-    const h = engineSetup({ sets: [['abort-after-token'], ['ok']], loadErrors: { 2: refused } });
+    const h = engineSetup({ steps: ['abort-after-token', 'ok'], loadErrors: { 3: refused } });
     await h.c.init();
     const first = h.c.ask('q1');
     await until(() => h.c.getState().ask.streamed === '4');
@@ -570,14 +646,14 @@ describe('app controller: Stop, then the next question', () => {
       status: 'refused',
       refusal: { reason: 'manifest_refused', detail: 'no_valid_signature' },
     });
-    // the third load (the second try) succeeds: nothing is stuck
+    // the next loads (the second try) succeed: nothing is stuck
     await h.c.ask('What is the grace period?');
     expect(h.c.getState().ask).toMatchObject({ status: 'done', displayText: GRACE });
-    expect(h.c.getState().model.status).toBe('ready');
+    expect(h.c.getState().model.status).toBe('cached');
 
     const i = engineSetup({
-      sets: [['abort-after-token'], ['ok']],
-      loadErrors: { 2: new AdapterError('integrity', 'x') },
+      steps: ['abort-after-token', 'ok'],
+      loadErrors: { 3: new AdapterError('integrity', 'x') },
     });
     await i.c.init();
     const f2 = i.c.ask('q1');
@@ -590,7 +666,7 @@ describe('app controller: Stop, then the next question', () => {
 
   it('model_not_cached appears only when the load says a file is really missing (a not_cached adapter error, or no stored manifest)', async () => {
     for (const missing of [new Refusal('model_not_cached'), new AdapterError('not_cached', 'x')]) {
-      const h = engineSetup({ sets: [['abort-after-token'], ['ok']], loadErrors: { 2: missing } });
+      const h = engineSetup({ steps: ['abort-after-token', 'ok'], loadErrors: { 3: missing } });
       await h.c.init();
       const first = h.c.ask('q1');
       await until(() => h.c.getState().ask.streamed === '4');
@@ -603,19 +679,19 @@ describe('app controller: Stop, then the next question', () => {
   });
 
   it('a generate that rejects not_loaded with no Stop (a crashed worker) is re-loaded once and retried, with the answer shown', async () => {
-    const h = engineSetup({ sets: [['not_loaded'], ['ok']] });
+    const h = engineSetup({ steps: ['not_loaded', 'ok'] });
     await h.c.init();
     await h.c.ask('What is the grace period?');
-    expect(h.load).toHaveBeenCalledTimes(2);
-    expect(h.made[0]!.unload).toHaveBeenCalledTimes(1);
+    expect(h.load.mock.calls.map((c) => c[0])).toEqual(['embedder', 'generator', 'generator']);
+    expect(h.made[1]!.unload).toHaveBeenCalledTimes(1);
     expect(h.c.getState().ask).toMatchObject({ status: 'done', displayText: GRACE });
   });
 
   it('a not_loaded that survives the one re-load is a plain failure, not "not downloaded" and not a loop', async () => {
-    const h = engineSetup({ sets: [['not_loaded'], ['not_loaded']] });
+    const h = engineSetup({ steps: ['not_loaded', 'not_loaded'] });
     await h.c.init();
     await h.c.ask('What is the grace period?');
-    expect(h.load).toHaveBeenCalledTimes(2);
+    expect(h.load).toHaveBeenCalledTimes(3);
     expect(h.c.getState().ask).toMatchObject({
       status: 'refused',
       refusal: { reason: 'failed', message: 'The answer failed.' },
@@ -635,6 +711,7 @@ describe('app controller: Stop, then the next question', () => {
       integrity: { status: 'refused', reason: 'integrity' },
       context_overflow: { status: 'refused', reason: 'context_overflow' },
       not_cached: { status: 'refused', reason: 'model_not_cached' },
+      out_of_memory: { status: 'refused', reason: 'out_of_memory' },
     };
     for (const [code, want] of Object.entries(table)) {
       const { c } = setup({

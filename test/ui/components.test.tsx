@@ -306,12 +306,13 @@ describe('capability card', () => {
     features: {},
     measuredAt: 'x',
   } as never;
-  it('shows the profile fields, the verdict, and the note that ramGb is the rounded reported memory', () => {
+  it('shows the profile fields, the memory line, and the note that ramGb is the rounded reported memory', () => {
     const html = renderToStaticMarkup(
       <CapabilityCard
         capability={{
           profile,
           verdict: 'meets',
+          memory: { kind: 'meets', reportedGb: 8, requiredGb: 4 },
           note: CAPABILITY_NOTE,
         }}
       />,
@@ -319,16 +320,66 @@ describe('capability card', () => {
     for (const t of [
       'wasm-simd',
       '12.5',
-      'meets the minimum',
+      'Memory line: the answer model needs a device that reports at least 4 GB to the browser. This device reports 8 GB (navigator.deviceMemory, rounded, at most 8). A web page cannot read free memory.',
       'rounded memory the browser reports (navigator.deviceMemory)',
     ])
       expect(html).toContain(t);
     expect(html).not.toContain('cap the reported memory');
+    expect(html).not.toMatch(/free RAM/i);
+  });
+  it('below the line the card says the load will be refused, with the reported value and the line', () => {
+    const html = renderToStaticMarkup(
+      <CapabilityCard
+        capability={{
+          profile: { ...(profile as object), ramGb: 2 } as never,
+          verdict: 'below',
+          memory: { kind: 'below', reportedGb: 2, requiredGb: 4 },
+          note: CAPABILITY_NOTE,
+        }}
+      />,
+    );
+    expect(html).toContain('This device reports 2 GB');
+    expect(html).toContain('at least 4 GB');
+    expect(html).toContain('loading the model will be refused');
+    expect(html).toContain('data-verdict="below"');
+  });
+  it('TD-84: a browser that does not report its memory gets the plain "does not report" line, not "below"', () => {
+    const html = renderToStaticMarkup(
+      <CapabilityCard
+        capability={{
+          profile: { ...(profile as object), ramGb: 0 } as never,
+          verdict: 'unknown',
+          memory: { kind: 'unknown', requiredGb: 4 },
+          note: CAPABILITY_NOTE,
+        }}
+      />,
+    );
+    expect(html).toContain(
+      'This browser does not report its memory; the answer model may not fit.',
+    );
+    expect(html).toContain('data-verdict="unknown"');
+    expect(html).not.toContain('below');
+  });
+  it('without a line from the manifest the card states no memory verdict', () => {
+    const html = renderToStaticMarkup(
+      <CapabilityCard
+        capability={{
+          profile,
+          verdict: 'unknown',
+          memory: { kind: 'no_line' },
+          note: CAPABILITY_NOTE,
+        }}
+      />,
+    );
+    expect(html).toContain('No memory line yet: the model list is not verified on this device.');
+    expect(html).not.toContain('Memory line: the answer model needs');
   });
   it('says Measuring while the profile is pending', () => {
     expect(
       renderToStaticMarkup(
-        <CapabilityCard capability={{ profile: null, verdict: 'unknown', note: 'n' }} />,
+        <CapabilityCard
+          capability={{ profile: null, verdict: 'unknown', memory: { kind: 'no_line' }, note: 'n' }}
+        />,
       ),
     ).toContain('Measuring');
   });

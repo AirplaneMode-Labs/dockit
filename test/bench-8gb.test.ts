@@ -15,8 +15,14 @@ describe('laptop_8gb column (BUG-T1-S5-07)', () => {
     expect(cols.LAPTOP_8GB).toBe(PHRASE);
   });
 
-  it('both column lists end with laptop_8gb', () => {
-    expect(cols.E2E_COLUMNS.at(-1)).toBe('laptop_8gb');
+  it('the question list ends with laptop_8gb and the run list has laptop_8gb then the two host-load columns (BUG-T1-S6-05)', () => {
+    expect(cols.E2E_COLUMNS.slice(-3)).toEqual([
+      'laptop_8gb',
+      'host_load_1m_start',
+      'host_load_1m_end',
+    ]);
+    expect(cols.E2E_COLUMNS_BASE.at(-1)).toBe('laptop_8gb');
+    expect(cols.E2E_COLUMNS.slice(0, cols.E2E_COLUMNS_BASE.length)).toEqual(cols.E2E_COLUMNS_BASE);
     expect(cols.Q_COLUMNS.at(-1)).toBe('laptop_8gb');
     expect(new Set(cols.E2E_COLUMNS).size).toBe(cols.E2E_COLUMNS.length);
     expect(new Set(cols.Q_COLUMNS).size).toBe(cols.Q_COLUMNS.length);
@@ -27,7 +33,9 @@ describe('laptop_8gb column (BUG-T1-S5-07)', () => {
     (f) => {
       const text = read(f);
       const header = text.split('\n')[0]!.split(',');
-      expect(header.at(-1)).toBe('laptop_8gb');
+      // e2e.csv may carry the two trailing host-load columns (a CSV taken before BUG-T1-S6-05 does not)
+      const own = f === 'e2e.csv' ? header.filter((c) => !c.startsWith('host_load_1m_')) : header;
+      expect(own.at(-1)).toBe('laptop_8gb');
       const rows = parseCsv(text) as Record<string, string>[];
       expect(rows.length).toBeGreaterThanOrEqual(6);
       const missing = rows.filter((r) => r['laptop_8gb'] !== PHRASE);
@@ -36,8 +44,39 @@ describe('laptop_8gb column (BUG-T1-S5-07)', () => {
   );
 
   it('the CSV headers equal the column lists the benchmark writes', () => {
-    expect(read('e2e.csv').split('\n')[0]).toBe(cols.E2E_COLUMNS.join(','));
+    const head = read('e2e.csv').split('\n')[0];
+    expect([cols.E2E_COLUMNS.join(','), cols.E2E_COLUMNS_BASE.join(',')]).toContain(head);
     expect(read('e2e-questions.csv').split('\n')[0]).toBe(cols.Q_COLUMNS.join(','));
+  });
+
+  it('bench-e2e.mjs records the 1-minute load average at the start and end of every run, with two decimals (BUG-T1-S6-05)', () => {
+    const src = readFileSync(join(root, 'scripts', 'bench-e2e.mjs'), 'utf8');
+    expect(src).toMatch(/loadavg\(\)\[0\]/);
+    expect(src).toContain('host_load_1m_start');
+    expect(src).toContain('host_load_1m_end');
+    expect(cols.hostLoad(2.4)).toBe('2.40');
+    expect(cols.hostLoad(11.567)).toBe('11.57');
+    const row: Record<string, string> = {
+      laptop_8gb: PHRASE,
+      host_load_1m_start: '1.00',
+      host_load_1m_end: '2.00',
+    };
+    const lines = cols
+      .csv(cols.E2E_COLUMNS, [Object.fromEntries(cols.E2E_COLUMNS.map((c) => [c, row[c] ?? 'x']))])
+      .split('\n');
+    expect(lines[0]!.endsWith(',laptop_8gb,host_load_1m_start,host_load_1m_end')).toBe(true);
+    expect(lines[1]!.endsWith(`,${PHRASE},1.00,2.00`)).toBe(true);
+  });
+
+  it('the README says peaks are comparable only on a quiet host, and names the exact fall (BUG-T1-S6-05)', () => {
+    const readme = readFileSync(join(root, 'README.md'), 'utf8');
+    expect(readme).toMatch(/Process-tree peaks are comparable only between runs on a quiet host/);
+    expect(readme).toContain('The stated figure is the quiet-host one');
+    expect(readme).toMatch(
+      /computed from the exact medians \(the exact fall is \d[\d,]*\.\d MiB, shown as [\d,]+ MiB\)/,
+    );
+    // no tester load figure in the README: those numbers live in B1-result.md only
+    expect(readme).not.toMatch(/load average of 7/);
   });
 
   it('csv() refuses to write a row without the phrase, and writes one with it', () => {
@@ -60,7 +99,12 @@ describe('laptop_8gb column (BUG-T1-S5-07)', () => {
   it('the README table is built from the CSV column, and fails when a row lacks the phrase', () => {
     const e2e = read('e2e.csv');
     const q = read('e2e-questions.csv');
-    expect(table(e2e, q).split('\n')[2]).toContain(`| ${PHRASE} |`);
+    // without the baseline pair the block starts with the per-CSV table; with it (the README) the comparison table comes first and carries the phrase too
+    expect(table(e2e, q, null).split('\n')[2]).toContain(`| ${PHRASE} |`);
+    const withBaseline = table(e2e, q).split('\n');
+    expect(withBaseline.filter((l) => /^\| (Before|After)/.test(l))).toHaveLength(2);
+    for (const l of withBaseline.filter((l) => /^\| (Before|After)/.test(l)))
+      expect(l).toContain(`| ${PHRASE} |`);
     const broken = e2e.replace(new RegExp(`,${PHRASE}(\\n|$)`), ',\n');
     expect(() => table(broken, q)).toThrow(/laptop_8gb/);
     const readme = readFileSync(join(root, 'README.md'), 'utf8');

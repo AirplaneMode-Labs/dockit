@@ -63,17 +63,33 @@ describe("README: what 'requests after offline = 0' counts (BUG-T1-S5-08)", () =
 describe('README Limitations (BUG-T1-S5-09 / S1-107, S1-112 c)', () => {
   const lim = section('Limitations').replace(/\s+/g, ' ');
 
-  it("carries the S1-107 sentence: a hostile PDF can still exhaust the tab's memory; stream accounting is planned for Sprint 6", () => {
+  it("states that S1-107 is closed: a PDF that hides a very large compressed font or image is refused before pdf.js opens it, with the measured outcome and 'not measured on 8 GB'", () => {
     expect(lim).toContain(
-      "A hostile PDF that hides a very large compressed font or image can still exhaust the tab's memory; stream accounting across fonts and images is planned (Sprint 6).",
+      'A hostile PDF that hides a very large compressed font or image is refused before pdf.js opens it',
     );
+    expect(lim).not.toContain('stream accounting across fonts and images is planned');
+    expect(lim).toMatch(/font-bomb/iu);
+    expect(lim).toMatch(/Measured on 19 Nov 2026/u);
+    expect(lim).toMatch(/peak[^.]{0,60}resident size[\s\S]{0,300}\d[\d,]* MiB/iu);
+    expect(lim).toContain('8,121 MiB'); // Sprint 5's figure for the same bomb, as the comparison
+    expect(lim).toMatch(/refused before it was opened/iu);
+    expect(lim).toMatch(/not measured on 8 GB/iu);
   });
 
-  it("records what the font-bomb fixture did in Chrome: the outcome, the peak RSS, and 'not measured on 8 GB'", () => {
-    expect(lim).toMatch(/font-bomb/iu);
-    expect(lim).toMatch(/Observed/u);
-    expect(lim).toMatch(/peak[^.]{0,40}resident size[\s\S]{0,200}\d[\d,]* MiB/iu);
-    expect(lim).toMatch(/refus|accepted|crash|success/iu);
+  it('says what the stream accounting still does not cover (pdf.js inline images, Type 3 procedures, font-parser time) and that a damaged file other readers repair is refused', () => {
+    expect(lim).toMatch(/inline[- ]image/iu);
+    expect(lim).toMatch(/Type 3/u);
+    expect(lim).toMatch(/damaged file|repair/iu);
+  });
+
+  it('says the memory line is a usability guard and not a security control, and that every question loads the models again (the cost, measured)', () => {
+    expect(lim).toContain('The memory line is a usability guard, not a security control');
+    expect(lim).toMatch(/deviceMemory[^.]{0,80}(user-controlled|overrid|change)/iu);
+    expect(lim).toMatch(
+      /Every question loads the embedder and then the answer model again from this device/u,
+    );
+    expect(lim).toMatch(/\d[\d,]* ms/u);
+    expect(lim).not.toMatch(/free RAM/iu);
   });
 
   it('a page cut short by a stream limit is refused as too large, not as scanned (BUG-T1-S5-09)', () => {
@@ -90,7 +106,7 @@ describe('README Limitations (BUG-T1-S5-09 / S1-107, S1-112 c)', () => {
 });
 
 describe('README: section 1 is the status line', () => {
-  it('the first paragraph of ## Status is the Sprint 5 status line of the page (and of site/data/demos.json), word for word', () => {
+  it('the first paragraph of ## Status is the Sprint 6 status line of the page (and of site/data/demos.json), word for word', () => {
     const m = /^## Status\n\n([\s\S]*?)\n\n/mu.exec(readme);
     expect(m, 'no ## Status section').not.toBeNull();
     expect(m![1]!.replace(/\s+/gu, ' ')).toBe(SPRINT_STATUS_LINE);

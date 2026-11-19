@@ -15,17 +15,61 @@ const REPORT = {
   warnings: [],
 };
 
+const LIMITS = {
+  font_decoded_max: 33_554_432,
+  image_decoded_max: 268_435_456,
+  image_raster_max: 268_435_456,
+  content_decoded_max: 67_108_864,
+  other_decoded_max: 67_108_864,
+  total_decoded_max: 536_870_912,
+  streams_max: 3_000_000,
+};
+const streamsJson = (over: Record<string, unknown> = {}) =>
+  JSON.stringify({
+    schema: 'pagetriage.streams/0.1',
+    verdict: 'ok',
+    reason: '',
+    limits: LIMITS,
+    streams: {
+      count: 1,
+      by_kind: {},
+      total_decoded_bytes: 0,
+      decoded_capped: false,
+      early_stop: false,
+    },
+    notes: [],
+    ...over,
+  });
+const STREAMS_OK = streamsJson();
+
 describe('analysis core (runs inside the analysis worker)', () => {
   const mkCore = (
-    over: { memBytes?: () => number | null; fail?: boolean; gate?: (t: string) => string } = {},
+    over: {
+      memBytes?: () => number | null;
+      fail?: boolean;
+      gate?: (t: string) => string;
+      streams?: (bytes: Uint8Array, opts: string | undefined) => string;
+      analyse?: (bytes: Uint8Array, opts: string | undefined) => string;
+    } = {},
   ) => {
-    const calls: { pt: unknown[]; gs: string[] } = { pt: [], gs: [] };
+    const calls: { pt: unknown[]; gs: string[]; order: string[]; streamsOpts: unknown[] } = {
+      pt: [],
+      gs: [],
+      order: [],
+      streamsOpts: [],
+    };
     const core = createAnalysisCore({
       pagetriage: {
+        account_pdf_streams: (bytes: Uint8Array, opts: string | undefined) => {
+          calls.order.push('streams');
+          calls.streamsOpts.push(opts);
+          return over.streams ? over.streams(bytes, opts) : STREAMS_OK;
+        },
         analyse_pdf_structure: (bytes: Uint8Array, opts: string | undefined) => {
+          calls.order.push('analyse');
           calls.pt.push([bytes.byteLength, opts]);
           if (over.fail) throw new Error('not a pdf');
-          return JSON.stringify(REPORT);
+          return over.analyse ? over.analyse(bytes, opts) : JSON.stringify(REPORT);
         },
         memoryBytes: over.memBytes ?? (() => 5_000_000),
       },
@@ -68,6 +112,118 @@ describe('analysis core (runs inside the analysis worker)', () => {
     expect(calls.pt[0]).toEqual([40, undefined]);
   });
 
+  it('triage gives the very ArrayBuffer back, so the bytes that were judged are the bytes that come home (B1 M3)', async () => {
+    const { core } = mkCore();
+    const buffer = new Uint8Array([1, 2, 3, 4]).buffer;
+    const r = (await core.handle({ v: 1, id: 1, type: 'triage', bytes: buffer })) as Extract<
+      AnalysisResponse,
+      { type: 'triage' }
+    >;
+    expect(r.bytes).toBe(buffer);
+  });
+
+  // S1-107: the stream accounting runs first, with no options, and a refusal stops the triage
+  it('triage accounts the streams FIRST, with no options (opts_json is never passed), then analyses the structure', async () => {
+    const { core, calls } = mkCore();
+    await core.handle({ v: 1, id: 1, type: 'triage', bytes: new Uint8Array(40).buffer });
+    expect(calls.order).toEqual(['streams', 'analyse']);
+    expect(calls.streamsOpts).toEqual([undefined]);
+  });
+
+  it.each([
+    'font_over_limit',
+    'image_over_limit',
+    'content_over_limit',
+    'other_over_limit',
+    'total_over_limit',
+    'too_many_streams',
+  ])(
+    'a refusal for %s is answered as streams_refused with the reason and the limits, and the structure is never analysed',
+    async (reason) => {
+      const { core, calls } = mkCore({ streams: () => streamsJson({ verdict: 'refuse', reason }) });
+      const r = await core.handle({
+        v: 1,
+        id: 9,
+        type: 'triage',
+        bytes: new Uint8Array(40).buffer,
+      });
+      expect(r).toEqual({
+        v: 1,
+        id: 9,
+        type: 'streams_refused',
+        reason,
+        limits: LIMITS,
+        peakWasmBytes: 8_000_000, // the worker's memory after the accounting (5,000,000 + 3,000,000 in these fakes)
+      });
+      expect(calls.order).toEqual(['streams']);
+    },
+  );
+
+  it('a throw (a panic or a trap) and a reply of another shape are streams_unchecked, and the structure is never analysed (a trapped instance is not asked again)', async () => {
+    for (const streams of [
+      () => {
+        throw new Error('RuntimeError: unreachable');
+      },
+      () => 'not json',
+      () => streamsJson({ schema: 'other' }),
+      () => streamsJson({ verdict: 'ok', reason: 'font_over_limit' }),
+    ]) {
+      const { core, calls } = mkCore({ streams });
+      const r = await core.handle({
+        v: 1,
+        id: 4,
+        type: 'triage',
+        bytes: new Uint8Array(40).buffer,
+      });
+      expect(r).toMatchObject({ v: 1, id: 4, type: 'streams_unchecked' });
+      expect(calls.order).toEqual(['streams']);
+    }
+  });
+
+  // An encrypted file cannot be counted (its streams are ciphertext), so the accounting says 'unaccounted' for it. It must keep its own plain refusal
+  // (password-protected), as in Sprint 5: pagetriage's structure report says encrypted, and the pipeline's routing refuses it. pdf.js never starts.
+  it("'unaccounted' for a file that pagetriage's structure report calls encrypted is an ordinary triage response, so the file is refused as encrypted", async () => {
+    const encryptedReport = { ...REPORT, structure: { encrypted: true } };
+    const { core, calls } = mkCore({
+      streams: () => streamsJson({ verdict: 'refuse', reason: 'unaccounted' }),
+      analyse: () => JSON.stringify(encryptedReport),
+    });
+    const r = await core.handle({ v: 1, id: 5, type: 'triage', bytes: new Uint8Array(40).buffer });
+    expect(r).toMatchObject({ v: 1, id: 5, type: 'triage', report: encryptedReport });
+    expect(calls.order).toEqual(['streams', 'analyse']);
+  });
+
+  it("'unaccounted' for any other file (a structure the parser could not load, or one that needed repair) is streams_unchecked, whatever the structure report says", async () => {
+    for (const analyse of [
+      () => JSON.stringify(REPORT), // not encrypted
+      () => {
+        throw new Error('not a pdf');
+      },
+      () => 'not json',
+    ]) {
+      const { core } = mkCore({
+        streams: () => streamsJson({ verdict: 'refuse', reason: 'unaccounted' }),
+        analyse,
+      });
+      const r = await core.handle({
+        v: 1,
+        id: 6,
+        type: 'triage',
+        bytes: new Uint8Array(40).buffer,
+      });
+      expect(r).toMatchObject({ v: 1, id: 6, type: 'streams_unchecked' });
+    }
+  });
+
+  it("the report's notes never reach the response", async () => {
+    const { core } = mkCore({
+      streams: () =>
+        streamsJson({ verdict: 'refuse', reason: 'font_over_limit', notes: ['SENTINEL-NOTE'] }),
+    });
+    const r = await core.handle({ v: 1, id: 1, type: 'triage', bytes: new Uint8Array(40).buffer });
+    expect(JSON.stringify(r)).not.toContain('SENTINEL');
+  });
+
   it('peak memory is the maximum over all calls so far, never lower than before', async () => {
     let n = 1_000_000;
     let shrink = false;
@@ -91,7 +247,11 @@ describe('analysis core (runs inside the analysis worker)', () => {
     };
     expect(r.peakWasmBytes).toBeNull();
     const g = createAnalysisCore({
-      pagetriage: { analyse_pdf_structure: () => '{}', memoryBytes: () => null },
+      pagetriage: {
+        account_pdf_streams: () => STREAMS_OK,
+        analyse_pdf_structure: () => '{}',
+        memoryBytes: () => null,
+      },
       glyphsift: { gate: () => '{}', memoryBytes: () => null },
     });
     const r2 = (await g.handle({ v: 1, id: 1, type: 'triage', bytes: new ArrayBuffer(8) })) as {
@@ -220,14 +380,75 @@ describe('analysis client (main thread)', () => {
     await Promise.resolve();
     expect(w.sent[0]!.msg).toMatchObject({ v: 1, type: 'triage' });
     expect(w.sent[0]!.transfer).toHaveLength(1);
+    const sent = (w.sent[0]!.msg as { bytes: ArrayBuffer }).bytes;
     w.reply({
       v: 1,
       id: w.sent[0]!.msg.id,
       type: 'triage',
       report: REPORT as never,
       peakWasmBytes: 123,
+      bytes: sent, // the worker gives the one buffer back (B1 M3)
     });
-    await expect(p).resolves.toEqual({ report: REPORT, peakWasmBytes: 123 });
+    const r = await p;
+    expect(r).toMatchObject({ report: REPORT, peakWasmBytes: 123 });
+    expect([...r.bytes]).toEqual([1, 2, 3]);
+    expect(r.bytes.buffer).toBe(sent); // not a copy
+  });
+
+  it('a triage response that does not give the bytes back is corrupt (what was judged must be what is opened)', async () => {
+    const w = new FakeWorker();
+    const c = createAnalysisClient({ startWorker: () => w as never });
+    const p = c.triage(new Uint8Array([1, 2, 3]));
+    await Promise.resolve();
+    w.emit('message', {
+      v: 1,
+      id: w.sent[0]!.msg.id,
+      type: 'triage',
+      report: REPORT,
+      peakWasmBytes: 1,
+    });
+    await expect(p).rejects.toMatchObject({ reason: 'corrupt' });
+  });
+
+  // B1 M3: the analysis worker holds two WebAssembly modules; its memory is returned by ending it as soon as the stage is over
+  it('the worker is terminated as soon as a call settles, and the next call starts a fresh one', async () => {
+    const workers: FakeWorker[] = [];
+    const c = createAnalysisClient({
+      startWorker: () => {
+        const w = new FakeWorker();
+        workers.push(w);
+        return w as never;
+      },
+    });
+    const p = c.gate(['a']);
+    await Promise.resolve();
+    workers[0]!.reply({ v: 1, id: workers[0]!.sent[0]!.msg.id, type: 'gate', results: [null] });
+    await p;
+    expect(workers[0]!.terminated).toBe(true);
+    const q = c.triage(new Uint8Array([9]));
+    await Promise.resolve();
+    expect(workers).toHaveLength(2);
+    const buf = (workers[1]!.sent[0]!.msg as { bytes: ArrayBuffer }).bytes;
+    workers[1]!.reply({
+      v: 1,
+      id: workers[1]!.sent[0]!.msg.id,
+      type: 'triage',
+      report: REPORT as never,
+      peakWasmBytes: null,
+      bytes: buf,
+    });
+    await q;
+    expect(workers[1]!.terminated).toBe(true);
+  });
+
+  it('a call that fails also ends its worker', async () => {
+    const w = new FakeWorker();
+    const c = createAnalysisClient({ startWorker: () => w as never });
+    const p = c.gate(['a']);
+    await Promise.resolve();
+    w.reply({ v: 1, id: w.sent[0]!.msg.id, type: 'error', code: 'corrupt' });
+    await expect(p).rejects.toMatchObject({ reason: 'corrupt' });
+    expect(w.terminated).toBe(true);
   });
 
   it('gate resolves with the verdicts', async () => {
@@ -322,5 +543,67 @@ describe('analysis client (main thread)', () => {
     await Promise.resolve();
     c.dispose();
     expect(w.terminated).toBe(true);
+  });
+});
+
+describe('analysis client: the stream accounting verdict (S1-107, TD-85)', () => {
+  const triageWith = async (reply: (id: number) => unknown) => {
+    const w = new FakeWorker();
+    const c = createAnalysisClient({ startWorker: () => w as never });
+    const p = c.triage(new Uint8Array([1, 2, 3]));
+    await Promise.resolve();
+    w.emit('message', reply(w.sent[0]!.msg.id));
+    return { p, w };
+  };
+
+  it('streams_refused is the refusal stream_limit with the plain sentence for the kind, and the worker is ended', async () => {
+    const { p, w } = await triageWith((id) => ({
+      v: 1,
+      id,
+      type: 'streams_refused',
+      reason: 'font_over_limit',
+      limits: LIMITS,
+      peakWasmBytes: 1234,
+    }));
+    await expect(p).rejects.toMatchObject({
+      name: 'Refusal',
+      reason: 'stream_limit',
+      message:
+        'This PDF holds a font that unpacks to more than 32 MiB, so it was refused before it was opened.',
+      detail: { limit: 'font_over_limit', peakWasmBytes: 1234 },
+    });
+    expect(w.terminated).toBe(true);
+  });
+
+  it("streams_unchecked is the existing 'corrupt' refusal with the documented sentence", async () => {
+    const { p } = await triageWith((id) => ({
+      v: 1,
+      id,
+      type: 'streams_unchecked',
+      peakWasmBytes: null,
+    }));
+    await expect(p).rejects.toMatchObject({
+      name: 'Refusal',
+      reason: 'corrupt',
+      message:
+        "This PDF's structure could not be checked safely, so it was refused before it was opened.",
+    });
+  });
+
+  it('a streams_refused the worker got wrong (an unknown reason, a limit that is not a count) is a plain corrupt, not a made-up sentence', async () => {
+    for (const bad of [
+      { reason: 'something_new', limits: LIMITS },
+      { reason: 'font_over_limit', limits: { ...LIMITS, font_decoded_max: -5 } },
+      { reason: 'font_over_limit', limits: undefined },
+    ]) {
+      const { p } = await triageWith((id) => ({
+        v: 1,
+        id,
+        type: 'streams_refused',
+        peakWasmBytes: null,
+        ...bad,
+      }));
+      await expect(p).rejects.toMatchObject({ reason: 'corrupt' });
+    }
   });
 });

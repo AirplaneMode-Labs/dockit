@@ -25,6 +25,7 @@ const EXPECTED: Record<AdapterErrorCode, string> = {
   integrity: 'refusal:integrity',
   context_overflow: 'refusal:context_overflow',
   not_cached: 'refusal:model_not_cached', // the asset manager says a file is not stored in full
+  out_of_memory: 'refusal:out_of_memory', // backend adapter R18: the engine could not allocate; the worker was ended, nothing is retried
 };
 const describeOutcome = (code: AdapterErrorCode): string => {
   const o = ADAPTER_OUTCOMES[code];
@@ -80,5 +81,20 @@ describe('AdapterErrorCode to outcome table', () => {
     expect(isAdapterError(new Error('x'))).toBe(false);
     expect(isAdapterError({ name: 'AdapterError', code: 'aborted' })).toBe(false);
     expect(adapterOutcome(new TypeError('x'))).toBeUndefined();
+  });
+
+  // B1 M6 backstop: an out-of-memory failure in the engine is its own plain refusal, and what the engine said never reaches the user or an event
+  it('out_of_memory is the plain out-of-memory refusal; the worker string it carried is not in the message', () => {
+    const m = mapAdapterError(
+      new AdapterError('out_of_memory', 'RangeError: SENTINEL-WORKER-STRING'),
+    );
+    expect(m).toBeInstanceOf(Refusal);
+    expect((m as Refusal).reason).toBe('out_of_memory');
+    expect((m as Refusal).message).toBe(
+      'The browser ran out of memory while running the model, so the answer was stopped. Close other tabs and try again; this device may not have enough memory for the demo model.',
+    );
+    expect((m as Refusal).message).not.toContain('SENTINEL');
+    expect(JSON.stringify((m as Refusal).detail ?? {})).not.toContain('SENTINEL');
+    expect((m as Refusal).message).not.toMatch(/free RAM/i);
   });
 });

@@ -76,13 +76,15 @@ export class FakeGenerator {
     this.lastOpts = opts;
     return {
       text: r,
-      finishReason: 'stop',
+      finishReason: this.finishReason,
       budget: opts?.maxTokens ?? 256,
       usage: { promptTokens: 100, completionTokens: 12 },
       timings: { firstTokenMs: 5, totalMs: 20 } as never,
     };
   }
   lastOpts: { maxTokens?: number; temperature?: number } | undefined;
+  /** What generate() reports: 'abort' is a Stop after the first token (the worker host ended the engine, R8). */
+  finishReason: GenerateResult['finishReason'] = 'stop';
 }
 
 /** Brute-force cosine, ordering per the 0.3.0 contract: score desc, docId asc, ordinal asc. Only the documents API is implemented. */
@@ -188,6 +190,47 @@ export class FakeStore {
     this.kv.delete(ns);
   }
   async close() {}
+}
+
+/**
+ * A model pool whose engines are the fakes above. It records every lease ('embedder:start', 'embedder:end', ...) and how many leases were held at
+ * once, so a test can prove the pipeline never holds two engines and fixes the order of the loads (B1 M1).
+ */
+export class FakeModels {
+  leases: string[] = [];
+  active = 0;
+  maxActive = 0;
+  constructor(
+    readonly embedder: FakeEmbedder,
+    readonly generator: FakeGenerator,
+    readonly specialTokens: readonly string[] = [],
+  ) {}
+  private async lease<T>(kind: 'embedder' | 'generator', run: () => Promise<T>): Promise<T> {
+    this.active++;
+    this.maxActive = Math.max(this.maxActive, this.active);
+    this.leases.push(`${kind}:start`);
+    try {
+      return await run();
+    } finally {
+      this.leases.push(`${kind}:end`);
+      this.active--;
+    }
+  }
+  useEmbedder<T>(
+    fn: (e: Pick<BackendAdapter, 'embed'>, ctx: { specialTokens: readonly string[] }) => Promise<T>,
+  ): Promise<T> {
+    return this.lease('embedder', () => fn(this.embedder as never, { specialTokens: [] }));
+  }
+  useGenerator<T>(
+    fn: (
+      g: Pick<BackendAdapter, 'generate'>,
+      ctx: { specialTokens: readonly string[] },
+    ) => Promise<T>,
+  ): Promise<T> {
+    return this.lease('generator', () =>
+      fn(this.generator as never, { specialTokens: this.specialTokens }),
+    );
+  }
 }
 
 export const asStore = (s: FakeStore): StorageApi => s as unknown as StorageApi;

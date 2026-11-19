@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AdapterError } from '../../src/contracts/backend-adapter.ts';
+import { PIPELINE_ANSWER_OUTCOMES } from '../../src/contracts/event.ts';
 import { StorageError } from '../../src/contracts/storage-api.ts';
 import { createPipeline, type PipelineDeps } from '../../src/pipeline/pipeline.ts';
 import { DEFAULT_SPECIAL_TOKENS, REFUSAL_REPLY } from '../../src/pipeline/prompt.ts';
@@ -7,6 +8,7 @@ import { Refusal } from '../../src/pipeline/reasons.ts';
 import {
   FakeEmbedder,
   FakeGenerator,
+  FakeModels,
   FakeStore,
   RecordingSink,
   asStore,
@@ -60,24 +62,24 @@ function setup(
   const store = new FakeStore();
   const embedder = new FakeEmbedder();
   const generator = new FakeGenerator();
+  const models = new FakeModels(embedder, generator, [...DEFAULT_SPECIAL_TOKENS]);
   const extractCalls: number[][] = [];
   const deps: PipelineDeps = {
     events: sink,
     store: asStore(store),
-    embedder,
-    generator,
-    specialTokens: [...DEFAULT_SPECIAL_TOKENS],
+    models,
     now: (() => {
       let t = 0;
       return () => (t += 10);
     })(),
     analysis: {
-      triage: async () => ({
+      triage: async (bytes: Uint8Array) => ({
         report: report(
           over.states ?? ['native_text', 'native_text', 'native_text'],
           over.reportOver,
         ),
         peakWasmBytes: 1_000_000,
+        bytes, // the analysis worker gives the one buffer back (B1 M3)
       }),
       gate: async (texts: string[]) =>
         texts.map((t) => toGate(over.scores ? over.scores(t) : 1_000_000)),
@@ -92,7 +94,7 @@ function setup(
     },
     ...over,
   } as PipelineDeps;
-  return { pipeline: createPipeline(deps), sink, store, embedder, generator, extractCalls };
+  return { pipeline: createPipeline(deps), sink, store, embedder, generator, models, extractCalls };
 }
 
 const toGate = (ppm: number | null) =>
@@ -135,7 +137,8 @@ describe('pipeline: open a document', () => {
     expect(stored!.title).not.toContain('pdf');
   });
 
-  it("embeds 'passage: ' + text in batches of at most 32", async () => {
+  // B1 M4 (TD-66): 8 passages a batch, not 32, so the engine's activation tensors stay small; kept only if the question set did not change (D5-04)
+  it("embeds 'passage: ' + text in batches of at most 8", async () => {
     const long = Array.from(
       { length: 300 },
       (_, i) => `Statement ${i} about the sample policy ends here. `,
@@ -150,8 +153,11 @@ describe('pipeline: open a document', () => {
     await pipeline.open(pdf(), { keep: false });
     expect(embedder.calls.length).toBeGreaterThan(1);
     for (const batch of embedder.calls) {
-      expect(batch.length).toBeLessThanOrEqual(32);
+      expect(batch.length).toBeLessThanOrEqual(8);
       for (const t of batch) expect(t.startsWith('passage: ')).toBe(true);
+    }
+    expect(Math.max(...embedder.calls.map((b) => b.length))).toBe(8); // and the batches are full
+    {
     }
   });
 
@@ -234,9 +240,10 @@ describe('pipeline: one rejected chunk is held, never the whole document (BUG-T2
     const { pipeline, store, sink } = setup({
       ...threePages({ 2: 'The grace period is 45 days. \ud800 broken glyph. ' }),
       analysis: {
-        triage: async () => ({
+        triage: async (bytes: Uint8Array) => ({
           report: report(['native_text', 'native_text', 'native_text']),
           peakWasmBytes: 1,
+          bytes,
         }),
         // glyphsift's gate() throws a TypeError for an ill-formed string, which the worker turns into null (not scored)
         gate: async (texts: string[]) =>
@@ -561,7 +568,7 @@ describe('pipeline: ask', () => {
   });
 
   // BUG-T1-S5-R2-02: Stop before the first token is the user's own choice, not a failure
-  it('an abort before the first token is outcome skipped on both events, with no reason, and is rethrown as the adapter error', async () => {
+  it('an abort before the first token is stage outcome skipped and pipeline.answer outcome aborted (BUG-T1-S6-03), with no reason, no model.generate, and is rethrown as the adapter error', async () => {
     const { pipeline, generator, sink } = await opened();
     const crossRealm = Object.assign(new Error('stopped'), {
       name: 'AdapterError',
@@ -573,8 +580,53 @@ describe('pipeline: ask', () => {
     expect(gen.map((e) => [e.attrs['outcome'], e.attrs['reason']])).toEqual([['skipped', '']]);
     const ans = sink.named('pipeline.answer');
     expect(ans).toHaveLength(1);
-    expect(ans[0]!.attrs).toMatchObject({ outcome: 'skipped', reason: '' });
+    expect(ans[0]!.attrs).toMatchObject({ outcome: 'aborted', reason: '' });
+    expect(ans[0]!.attrs['firstTokenMs'] ?? null).toBeNull();
     expect(ans[0]!.level).not.toBe('error');
+    expect(sink.named('model.generate')).toHaveLength(0);
+  });
+
+  it('every pipeline.answer outcome the pipeline emits is in the vendored PIPELINE_ANSWER_OUTCOMES (BUG-T1-S6-03)', async () => {
+    const allowed = new Set<string>(PIPELINE_ANSWER_OUTCOMES);
+    const seen = new Set<string>();
+    const run = async (setup: (g: any) => void): Promise<void> => {
+      const { pipeline, generator, sink } = await opened();
+      setup(generator);
+      await pipeline.ask(QUESTION, {}).catch(() => undefined);
+      for (const e of sink.named('pipeline.answer')) seen.add(String(e.attrs['outcome']));
+    };
+    await run(() => undefined);
+    await run((g) => (g.respond = () => new AdapterError('aborted', 'x')));
+    await run((g) => (g.respond = () => new AdapterError('integrity', 'x')));
+    await run((g) => (g.respond = () => new AdapterError('unknown' as never, 'x')));
+    await run((g) => ((g.respond = () => 'The grace'), (g.finishReason = 'abort')));
+    expect(seen.size).toBeGreaterThanOrEqual(3);
+    for (const o of seen) expect(allowed.has(o)).toBe(true);
+    expect(seen.has('skipped')).toBe(false);
+  });
+
+  // S1-119: a Stop after the first token is the user's choice, and the log says so: outcome 'aborted', not 'ok'
+  it("a Stop after the first token (finishReason 'abort') is outcome 'aborted' on pipeline.answer, with the first-token time and no reason", async () => {
+    const { pipeline, generator, sink } = await opened();
+    generator.respond = () => 'The grace';
+    generator.finishReason = 'abort';
+    const a = await pipeline.ask(QUESTION, {});
+    expect(a.finishReason).toBe('abort');
+    expect(a.text).toBe('The grace'); // the words written so far are kept
+    const ans = sink.named('pipeline.answer');
+    expect(ans).toHaveLength(1);
+    expect(ans[0]!.attrs).toMatchObject({ outcome: 'aborted', reason: '', firstTokenMs: 5 });
+    expect(typeof ans[0]!.attrs['firstTokenMs']).toBe('number');
+    expect(ans[0]!.level).toBe('info'); // not a failure
+  });
+
+  it("every other finish reason is still outcome 'ok'", async () => {
+    for (const finishReason of ['stop', 'length'] as const) {
+      const { pipeline, generator, sink } = await opened();
+      generator.finishReason = finishReason;
+      await pipeline.ask(QUESTION, {});
+      expect(sink.named('pipeline.answer')[0]!.attrs).toMatchObject({ outcome: 'ok', reason: '' });
+    }
   });
 
   it('a generate that rejects not_loaded is an error outcome and is NOT turned into model_not_cached (the controller re-loads; this is what is left when that fails)', async () => {
@@ -638,7 +690,11 @@ describe('pipeline: ask', () => {
     expect(mem[0]!.bytes).toBe(1_000_000);
     const b = setup({
       analysis: {
-        triage: async () => ({ report: report(['native_text']), peakWasmBytes: null }),
+        triage: async (bytes: Uint8Array) => ({
+          report: report(['native_text']),
+          peakWasmBytes: null,
+          bytes,
+        }),
         gate: async (t: string[]) => t.map(() => toGate(1_000_000)),
       } as never,
       extract: async (_b, pages) => ({
@@ -723,5 +779,302 @@ describe('pipeline: keep on this device (opt-in persistence, TD-41)', () => {
     const { pipeline } = setup();
     expect(await pipeline.listKept()).toEqual([]);
     await expect(pipeline.adopt('0'.repeat(32))).rejects.toMatchObject({ reason: 'no_index' });
+  });
+});
+
+// B1 M1 (TD-66): one engine at a time. The pipeline leases the embedder for an ingest (one lease across all its batches) and, per question,
+// the embedder for the question and then the generator for the answer; a lease ends (the engine is unloaded) before the next one starts.
+describe('pipeline: one engine lease at a time (B1 M1)', () => {
+  it('an ingest holds ONE embedder lease across every batch and never a generator', async () => {
+    const long = Array.from(
+      { length: 300 },
+      (_, i) => `Sentence number ${i} about the policy and its terms. `,
+    ).join('');
+    const { pipeline, embedder, models } = setup({
+      extract: async (_b, pages) => ({
+        pages: pages.map((p) => ({ page: p, text: long })),
+        skipped: [],
+        truncated: false,
+      }),
+    });
+    await pipeline.open(pdf(), { keep: false });
+    expect(embedder.calls.length).toBeGreaterThan(1); // several batches
+    expect(models.leases).toEqual(['embedder:start', 'embedder:end']);
+    expect(models.maxActive).toBe(1);
+  });
+
+  it('a question is embedder lease, then generator lease: the embedder has ended before the generator starts', async () => {
+    const { pipeline, models } = setup();
+    await pipeline.open(pdf(), { keep: false });
+    models.leases.length = 0;
+    await pipeline.ask(QUESTION, {});
+    expect(models.leases).toEqual([
+      'embedder:start',
+      'embedder:end',
+      'generator:start',
+      'generator:end',
+    ]);
+  });
+
+  it('7 questions: the fixed order repeats, and at most one lease is ever held', async () => {
+    const { pipeline, models } = setup();
+    await pipeline.open(pdf(), { keep: false });
+    models.leases.length = 0;
+    for (let i = 0; i < 7; i++) await pipeline.ask(QUESTION, {});
+    const one = ['embedder:start', 'embedder:end', 'generator:start', 'generator:end'];
+    expect(models.leases).toEqual(Array.from({ length: 7 }, () => one).flat());
+    expect(models.maxActive).toBe(1);
+  });
+
+  it('the context-overflow retries stay inside ONE generator lease (a retry is not a reload)', async () => {
+    const long = Array.from(
+      { length: 300 },
+      (_, i) => `Sentence number ${i} about the policy and its terms. `,
+    ).join('');
+    const { pipeline, generator, models } = setup({
+      extract: async (_b, pages) => ({
+        pages: pages.map((p) => ({ page: p, text: long })),
+        skipped: [],
+        truncated: false,
+      }),
+    });
+    await pipeline.open(pdf(), { keep: false });
+    models.leases.length = 0;
+    generator.respond = (_m, attempt) =>
+      attempt < 3 ? new AdapterError('context_overflow', 'too long') : 'ok [S1]';
+    await pipeline.ask(QUESTION, {});
+    expect(generator.prompts).toHaveLength(3);
+    expect(models.leases.filter((l) => l === 'generator:start')).toHaveLength(1);
+  });
+
+  it('a generator that fails releases its lease, and the special tokens come from the lease, not from a constant', async () => {
+    const { pipeline, generator, models } = setup();
+    await pipeline.open(pdf(), { keep: false });
+    models.leases.length = 0;
+    generator.respond = () => new AdapterError('integrity', 'x');
+    await expect(pipeline.ask(QUESTION, {})).rejects.toMatchObject({ reason: 'integrity' });
+    expect(models.leases.at(-1)).toBe('generator:end');
+    expect(models.active).toBe(0);
+  });
+});
+
+// B1 M3 (S1 TOCTOU): the bytes that triage (and the stream accounting) judged are the bytes pdf.js opens. The one buffer goes to the analysis
+// worker by transfer and comes back; the read stage records its length and sha256, and the extract stage refuses on a mismatch. The File is read
+// once and never again between the judgement and pdf.js.
+describe('pipeline: the judged bytes are the opened bytes (B1 M3)', () => {
+  const analysisWith = (triageBytes: (b: Uint8Array) => Uint8Array | undefined) => ({
+    triage: async (bytes: Uint8Array) => ({
+      report: report(['native_text', 'native_text', 'native_text']),
+      peakWasmBytes: 1,
+      bytes: triageBytes(bytes) as Uint8Array,
+    }),
+    gate: async (texts: string[]) => texts.map(() => toGate(1_000_000)),
+  });
+
+  it('the one buffer goes through the chain: pdf.js is handed the buffer that came back from the analysis worker', async () => {
+    const seen: { sent?: ArrayBufferLike; opened?: ArrayBufferLike } = {};
+    const { pipeline } = setup({
+      analysis: {
+        triage: async (bytes: Uint8Array) => {
+          seen.sent = bytes.buffer;
+          return {
+            report: report(['native_text', 'native_text', 'native_text']),
+            peakWasmBytes: 1,
+            bytes,
+          };
+        },
+        gate: async (texts: string[]) => texts.map(() => toGate(1_000_000)),
+      },
+      extract: async (bytes, pages) => {
+        seen.opened = bytes.buffer;
+        return {
+          pages: pages.map((p) => ({ page: p, text: PAGE_TEXTS[p - 1]! })),
+          skipped: [],
+          truncated: false,
+        };
+      },
+    });
+    await pipeline.open(pdf(), { keep: false });
+    expect(seen.sent).toBeDefined();
+    expect(seen.opened).toBe(seen.sent);
+  });
+
+  it('bytes that differ from the ones that were read (same length, one byte changed) are refused as corrupt, and pdf.js never runs', async () => {
+    const calls: number[][] = [];
+    const { pipeline, sink } = setup({
+      analysis: analysisWith((b) => {
+        const other = b.slice();
+        other[30] = other[30]! ^ 0xff;
+        return other;
+      }),
+      extract: async (_b, pages) => {
+        calls.push(pages);
+        return { pages: [], skipped: [], truncated: false };
+      },
+    });
+    await expect(pipeline.open(pdf(), { keep: false })).rejects.toMatchObject({
+      reason: 'corrupt',
+    });
+    expect(calls).toEqual([]);
+    expect(stages(sink).at(-1)).toEqual(['extract', 'refused', 'corrupt']);
+  });
+
+  it('bytes of another length, or no bytes at all, are refused as corrupt', async () => {
+    for (const give of [(b: Uint8Array) => b.subarray(0, b.length - 1), () => undefined]) {
+      const calls: number[][] = [];
+      const { pipeline } = setup({
+        analysis: analysisWith(give),
+        extract: async (_b, pages) => {
+          calls.push(pages);
+          return { pages: [], skipped: [], truncated: false };
+        },
+      });
+      await expect(pipeline.open(pdf(), { keep: false })).rejects.toMatchObject({
+        reason: 'corrupt',
+      });
+      expect(calls).toEqual([]);
+    }
+  });
+
+  it('the File is read once: nothing re-reads it between the judgement and pdf.js', async () => {
+    const file = pdf();
+    let reads = 0;
+    const orig = file.arrayBuffer.bind(file);
+    file.arrayBuffer = () => (reads++, orig());
+    const { pipeline } = setup();
+    await pipeline.open(file, { keep: false });
+    expect(reads).toBe(1);
+  });
+});
+
+// B1 M6 backstop and the privacy rule: an AdapterError('out_of_memory') becomes the plain refusal, in the answer and in the ingest, and nothing the
+// engine said (a RangeError message, a worker string) reaches an event or the refusal text.
+describe('pipeline: out of memory is its own plain refusal and leaks nothing (backend adapter R18)', () => {
+  const SENTINEL = 'SENTINEL-WORKER-STRING-RangeError-WebAssembly.Memory';
+  const oom = () => new AdapterError('out_of_memory', SENTINEL);
+  const allEvents = (sink: RecordingSink) => JSON.stringify(sink.events);
+
+  it('the answer: reason out_of_memory on the generate stage and on pipeline.answer, the plain message, no sentinel anywhere', async () => {
+    const s = setup();
+    await s.pipeline.open(pdf(), { keep: false });
+    s.generator.respond = () => oom();
+    const err = await s.pipeline.ask(QUESTION, {}).catch((e) => e);
+    expect(err).toBeInstanceOf(Refusal);
+    expect(err.reason).toBe('out_of_memory');
+    expect(err.message).not.toContain('SENTINEL');
+    const gen = s.sink.named('pipeline.stage').filter((e) => e.attrs['stage'] === 'generate');
+    expect(gen.map((e) => [e.attrs['outcome'], e.attrs['reason']])).toEqual([
+      ['refused', 'out_of_memory'],
+    ]);
+    expect(s.sink.named('pipeline.answer')[0]!.attrs).toMatchObject({
+      outcome: 'refused',
+      reason: 'out_of_memory',
+    });
+    expect(allEvents(s.sink)).not.toContain('SENTINEL');
+  });
+
+  it('the ingest: the embed stage is refused with out_of_memory (not held as one bad passage), no sentinel in any event', async () => {
+    const s = setup();
+    s.embedder.failWith = oom();
+    const err = await s.pipeline.open(pdf(), { keep: false }).catch((e) => e);
+    expect(err).toBeInstanceOf(Refusal);
+    expect(err.reason).toBe('out_of_memory');
+    expect(stages(s.sink).at(-1)).toEqual(['embed', 'refused', 'out_of_memory']);
+    expect(allEvents(s.sink)).not.toContain('SENTINEL');
+  });
+});
+
+// S1-107 (TD-85): the stream accounting refuses a file before triage reads the structure and before pdf.js starts. The pipeline records the
+// refusal as the triage stage with the reason stream_limit, keeps the worker's measured memory, and logs nothing the document supplied.
+describe('pipeline: a file refused by the stream accounting (S1-107)', () => {
+  const refusing = (reason: string, message: string, detail: Record<string, unknown>) => ({
+    analysis: {
+      triage: async () => {
+        throw new Refusal(reason as never, message, detail);
+      },
+      gate: async () => [],
+    },
+  });
+
+  it('the triage stage is refused with stream_limit, pdf.js never starts and the model is never touched', async () => {
+    const extracted: number[][] = [];
+    const s = setup({
+      ...refusing(
+        'stream_limit',
+        'This PDF holds a font that unpacks to more than 32 MiB, so it was refused before it was opened.',
+        { limit: 'font_over_limit', peakWasmBytes: 123_456 },
+      ),
+      extract: async (_b, pages) => (
+        extracted.push(pages),
+        { pages: [], skipped: [], truncated: false }
+      ),
+    });
+    const err = await s.pipeline.open(pdf(), { keep: false }).catch((e) => e);
+    expect(err).toBeInstanceOf(Refusal);
+    expect(err.reason).toBe('stream_limit');
+    expect(err.message).toBe(
+      'This PDF holds a font that unpacks to more than 32 MiB, so it was refused before it was opened.',
+    );
+    expect(extracted).toEqual([]);
+    expect(stages(s.sink)).toEqual([
+      ['read', 'ok', ''],
+      ['triage', 'refused', 'stream_limit'],
+    ]);
+    expect(s.models.leases).toEqual([]);
+    // the worker's memory after the accounting is kept (a pipeline.memory event), so the peak of a bomb can be read
+    const mem = s.sink.named('pipeline.memory');
+    expect(mem).toHaveLength(1);
+    expect(mem[0]!.bytes).toBe(123_456);
+    expect(mem[0]!.attrs).toMatchObject({
+      worker: 'analysis',
+      stage: 'triage',
+      measure: 'wasm-memory',
+    });
+  });
+
+  it("an unchecked structure is the existing 'corrupt' refusal with the documented sentence, and nothing else runs", async () => {
+    const s = setup(
+      refusing(
+        'corrupt',
+        "This PDF's structure could not be checked safely, so it was refused before it was opened.",
+        { peakWasmBytes: null },
+      ),
+    );
+    const err = await s.pipeline.open(pdf(), { keep: false }).catch((e) => e);
+    expect(err.reason).toBe('corrupt');
+    expect(err.message).toBe(
+      "This PDF's structure could not be checked safely, so it was refused before it was opened.",
+    );
+    expect(stages(s.sink).at(-1)).toEqual(['triage', 'refused', 'corrupt']);
+    expect(s.sink.named('pipeline.memory')).toHaveLength(1);
+    expect(s.sink.named('pipeline.memory')[0]!.attrs).toMatchObject({ measure: 'unavailable' });
+  });
+
+  it("no event carries the report's notes, the limit text or anything the document supplied: only the stage, the outcome and the reason", async () => {
+    const s = setup(
+      refusing(
+        'stream_limit',
+        'This PDF holds a font that unpacks to more than 32 MiB, so it was refused before it was opened.',
+        {
+          limit: 'font_over_limit',
+          peakWasmBytes: 1,
+          notes: ['SENTINEL-NOTE-FROM-THE-DOCUMENT'],
+        },
+      ),
+    );
+    await s.pipeline.open(pdf(), { keep: false }).catch(() => undefined);
+    const all = JSON.stringify(s.sink.events);
+    expect(all).not.toContain('SENTINEL');
+    expect(all).not.toContain('unpacks to'); // the sentence is for the screen, not for the log
+    expect(all).not.toContain(FILE_NAME);
+    for (const e of s.sink.named('pipeline.stage'))
+      expect(Object.keys(e.attrs).sort()).toEqual([
+        'chunks',
+        'held',
+        'outcome',
+        'pages',
+        'reason',
+        'stage',
+      ]);
   });
 });
