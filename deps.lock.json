@@ -3,19 +3,19 @@
   "deps": {
     "runtime": {
       "repo": "AirplaneMode-Labs/runtime",
-      "commit": "4f5b0116b07627c8278efc88a563621a2b5437a2"
+      "commit": "7d3777bdc6f0ef23b0a1fd8203d16f033aaf1a21"
     },
     "localdata": {
       "repo": "AirplaneMode-Labs/localdata",
-      "commit": "da39477efae49759e5c3d5841c52db178a9ce2a3"
+      "commit": "8abd87bc9bdafc642e2ecd47d042f5b36d33e377"
     },
     "pagetriage": {
       "repo": "AirplaneMode-Labs/pagetriage",
-      "commit": "1de5ff58785f7ffc4a61154f20f5794745922903"
+      "commit": "e52847c5f11205b3928146f4f598ca4aea6ec9d6"
     },
     "glyphsift": {
       "repo": "AirplaneMode-Labs/glyphsift",
-      "commit": "b3ea291cc610b16fac6a4fc943bf62df0623a486"
+      "commit": "84b5c3d9e4827510c7045db6b4c65ccc6de42222"
     }
   }
 }
