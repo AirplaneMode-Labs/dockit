@@ -103,8 +103,12 @@ export function validateEnvironmentLabel(label) {
   return label;
 }
 
-/** The columns of a Windows emulated run's runs file (job_* figures are filled from job-summary.json by scripts/bench-emulated-merge.mjs). */
-export const E2E_EMULATED_COLUMNS = [
+/**
+ * The columns of a Windows emulated run's runs file written before the limit was read back (the first dispatch of bench-windows, run 44656249868). The committed
+ * docs/benchmarks/e2e-emulated-win-vm.csv still has exactly this header, so every reader accepts it (EMULATED_HEADERS) and treats the columns it lacks as empty:
+ * 'limit unproven'. Nothing writes this header any more.
+ */
+export const E2E_EMULATED_COLUMNS_V1 = [
   ...E2E_COLUMNS,
   'environment',
   'job_commit_limit_bytes', // the Job Object commit limit; empty for the leg with no limit
@@ -114,6 +118,81 @@ export const E2E_EMULATED_COLUMNS = [
   'sampler_median_interval_ms',
   'failure_reason',
 ];
+
+/**
+ * The columns of a Windows emulated run's runs file. job_* figures and the six limit-evidence columns after failure_reason are filled from job-summary.json by
+ * scripts/bench-emulated-merge.mjs; bench-e2e writes them empty. An empty evidence cell means 'not read back / not probed' (a run before the evidence existed, or
+ * a leg with nothing to probe), never 'passed'.
+ */
+export const E2E_EMULATED_COLUMNS = [
+  ...E2E_EMULATED_COLUMNS_V1,
+  'job_limit_readback_bytes', // JobMemoryLimit as QueryInformationJobObject reports it after the process was assigned; 0 on the leg with no limit
+  'job_limit_flags_readback', // LimitFlags as reported, '0x2200' (job memory and kill on close) or '0x2000' (kill on close only)
+  'limit_probe_refused', // 'true': a commit of limit + 256 MiB made from inside the job was refused; 'false': it succeeded; empty: no probe (or an inconclusive one)
+  'job_peak_after_probe_bytes', // PeakJobMemoryUsed right after the probe (a refused commit that is counted in the peak shows here)
+  'job_memory_limit_messages', // JOB_OBJECT_MSG_JOB_MEMORY_LIMIT messages the job's completion port received over the whole run; empty when no port was attached
+  'control_leg', // 'true' on the control leg (a limit the benchmark must not complete under), 'false' on the others; empty before the field existed
+];
+
+/** The two headers a committed emulated runs CSV may have: the current one and the one written before the limit evidence existed. */
+export const EMULATED_HEADERS = Object.freeze([
+  E2E_EMULATED_COLUMNS.join(','),
+  E2E_EMULATED_COLUMNS_V1.join(','),
+]);
+
+/** The legs there are: name -> job commit limit in bytes (null: none). The control leg is the one whose limit is far below what the benchmark needs. */
+export const LEG_CAPS = Object.freeze({
+  none: null,
+  '8GiB': 8589934592,
+  '6GiB': 6442450944,
+  '5GiB': 5368709120,
+  '2GiB': 2147483648,
+});
+/** The legs that are controls: the benchmark must NOT complete under their limit, and their rows are never benchmark figures. */
+export const CONTROL_CAPS = Object.freeze(['2GiB']);
+
+/** What the probe commits above the limit, in bytes (256 MiB): scripts/win/run-capped.ps1 and the evidence text of the README and the site. */
+export const PROBE_OVER_LIMIT_BYTES = 268435456;
+
+/** The values a limit-evidence cell may hold. */
+export const LIMIT_FLAGS_READBACK = Object.freeze(['', '0x2000', '0x2200']);
+const TRUE_FALSE_OR_EMPTY = Object.freeze(['', 'true', 'false']);
+const COUNT_CELL = /^\d{1,16}$/;
+
+/**
+ * What one leg's evidence says about its commit limit, from the evidence cells of ONE of its rows (every row of a leg carries the same cells):
+ *   no_limit           the leg sets no limit (with or without a read-back: flags 0x2000, JobMemoryLimit 0)
+ *   proven             the limit read back equals what was set (0x2200 and the limit) AND the probe commit above the limit was refused
+ *   not_enforced       the limit read back equals what was set, and the probe commit above the limit succeeded: the cap was not in force
+ *   readback_mismatch  a read-back that differs from what was set
+ *   unproven           no read-back or no (conclusive) probe: a run before the evidence existed, or an inconclusive probe
+ * 'proven' needs both halves. A copy of this function is in site/scripts/import-dockit-emulated.mjs (test:siblings compares them on a table of rows).
+ */
+export function limitProof(row) {
+  const limit = row.job_commit_limit_bytes ?? '';
+  const bytes = row.job_limit_readback_bytes ?? '';
+  const flags = row.job_limit_flags_readback ?? '';
+  const probe = row.limit_probe_refused ?? '';
+  const read = bytes !== '' || flags !== '';
+  if (limit === '') {
+    // no limit is set: a read-back, when there is one, must say so (0x2000, 0)
+    return read && !(flags === '0x2000' && bytes === '0') ? 'readback_mismatch' : 'no_limit';
+  }
+  if (!read) return 'unproven';
+  if (!(flags === '0x2200' && bytes === limit)) return 'readback_mismatch';
+  if (probe === 'true') return 'proven';
+  if (probe === 'false') return 'not_enforced';
+  return 'unproven';
+}
+
+/** The wording of each reading, shared by the README block (scripts/bench-readme.mjs); site/scripts/build.mjs holds the same sentences. */
+export const LIMIT_PROOF_TEXT = Object.freeze({
+  no_limit: 'no limit set',
+  proven: 'limit proven in force (probe refused, read-back equal)',
+  not_enforced: 'cap NOT in force (the probe committed over the limit)',
+  readback_mismatch: 'read-back differs from what was set (not a result under this cap)',
+  unproven: 'limit unproven',
+});
 
 /**
  * BUG-T1-S7-06 (documented zero-row rule): an emulated run that fails before its first run completes (the model download, waitReady, the reload) still
@@ -143,6 +222,12 @@ export function runZeroRows({ date, label, commit, reason, loadStart = '', loadE
     job_escapes: '',
     sampler_median_interval_ms: '',
     failure_reason: reason,
+    job_limit_readback_bytes: '',
+    job_limit_flags_readback: '',
+    limit_probe_refused: '',
+    job_peak_after_probe_bytes: '',
+    job_memory_limit_messages: '',
+    control_leg: '',
   };
   const q = { ...base, qid: '', environment: label, failure_reason: reason };
   return { e2e, q };
@@ -220,6 +305,23 @@ export const csv = (cols, rows) => {
         throw new Error(
           `row ${i + 1}: failure_reason must be empty or one of ${FAILURE_REASONS.join(', ')}, not '${f}'`,
         );
+    });
+  }
+  if (cols.includes('limit_probe_refused')) {
+    rows.forEach((r, i) => {
+      const bad = (c, ok) => `row ${i + 1}: ${c} must be ${ok}, not '${r[c] ?? ''}'`;
+      for (const c of ['limit_probe_refused', 'control_leg'])
+        if (!TRUE_FALSE_OR_EMPTY.includes(String(r[c] ?? '')))
+          throw new Error(bad(c, 'empty, true or false'));
+      if (!LIMIT_FLAGS_READBACK.includes(String(r.job_limit_flags_readback ?? '')))
+        throw new Error(bad('job_limit_flags_readback', 'empty, 0x2000 or 0x2200'));
+      for (const c of [
+        'job_limit_readback_bytes',
+        'job_peak_after_probe_bytes',
+        'job_memory_limit_messages',
+      ])
+        if (String(r[c] ?? '') !== '' && !COUNT_CELL.test(String(r[c])))
+          throw new Error(bad(c, 'empty or a non-negative integer'));
     });
   }
   return `${cols.join(',')}\n${rows.map((r) => cols.map((c) => cell(r[c])).join(',')).join('\n')}\n`;

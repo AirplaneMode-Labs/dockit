@@ -1,11 +1,16 @@
 name: bench-windows
 
-# The first Windows run of the dockit benchmark (Sprint 7, B6, TD-113). It is dispatched by hand, once, after the push: it never runs on a push, a pull
+# The Windows run of the dockit benchmark (Sprint 7, B6, TD-113). It is dispatched by hand, after the push: it never runs on a push, a pull
 # request or a schedule, and it takes no input. An ubuntu job builds dist exactly as pages.yml does and hands it over as a one-day artefact; a windows-latest
 # job runs `npm run bench:e2e` against it once per leg of a fixed matrix: no job limit, then the pwsh, node and Chrome process tree inside a Windows Job
-# Object with a committed-memory limit of 8, 6 and 5 GiB (scripts/win/run-capped.ps1). The runner is a GitHub-hosted Windows Server VM, NOT a laptop, and
-# a commit limit is not a physical-memory limit: every row says so in its environment column, laptop_8gb stays "not measured on 8 GB" and the Sprint 5
-# done-when stays NOT met. The results are CSVs in separate files, imported into the repository in a follow-up. Nothing here publishes, signs or reads a secret.
+# Object with a committed-memory limit of 8, 6 and 5 GiB (scripts/win/run-capped.ps1), which reads the limit back from the system and probes it from inside the
+# job before it starts the benchmark. A fifth leg, 2 GiB, is the CONTROL: its limit is below the lowest Chrome-only commit peak of the first run (3.94 GB), so
+# the benchmark must NOT complete under it. The control leg is green only when it did not (and the probe and the read-back proved the limit in force); if the
+# benchmark completes under 2 GiB it is red, because that would mean the cap does nothing and no capped leg means anything. Its job limit is 20 minutes (the
+# script stops the benchmark after 12), the others' 90 (80). A control leg that fails before the benchmark writes a row has no CSV, and the merge step then says so in
+# one line instead of failing. The runner is a GitHub-hosted Windows Server VM, NOT a laptop, and a commit limit is not a physical-memory limit: every row says so
+# in its environment column, laptop_8gb stays "not measured on 8 GB" and the Sprint 5 done-when stays NOT met. The control leg's rows are never benchmark figures.
+# The results are CSVs in separate files, imported into the repository in a follow-up. Nothing here publishes, signs or reads a secret.
 on:
   workflow_dispatch:
 
@@ -128,16 +133,20 @@ jobs:
           compression-level: 1
 
   bench:
-    name: bench (windows-latest, ${{ matrix.cap }})
+    name: bench (windows-latest, ${{ matrix.cap }}${{ matrix.control && ', control' || '' }})
     needs: build
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: ${{ matrix.control && 20 || 90 }}
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
         cap: [none, 8GiB, 6GiB, 5GiB]
+        include:
+          # the control leg: expected to FAIL to complete the benchmark (see the header); run-capped.ps1 knows it by the cap name
+          - cap: 2GiB
+            control: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

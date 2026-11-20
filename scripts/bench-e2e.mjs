@@ -128,6 +128,13 @@ const emulatedFields = (extra = {}) =>
         job_escapes: '',
         sampler_median_interval_ms: '',
         failure_reason: '',
+        // the limit evidence: written empty here, filled from job-summary.json by scripts/bench-emulated-merge.mjs
+        job_limit_readback_bytes: '',
+        job_limit_flags_readback: '',
+        limit_probe_refused: '',
+        job_peak_after_probe_bytes: '',
+        job_memory_limit_messages: '',
+        control_leg: '',
         ...extra,
       }
     : {};
