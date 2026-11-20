@@ -1,0 +1,106 @@
+{
+  "summaryVersion": 2,
+  "cap": "2GiB",
+  "limitBytes": 2147483648,
+  "limitFlags": "0x2200",
+  "structSize": 144,
+  "label": "emulated: GitHub-hosted Windows Server 2025 Datacenter VM, x64, 4 vCPU, 16 GB RAM, pwsh, node and Chrome process tree under a job commit limit of 2147483648 bytes (control leg, expected to fail); not a laptop",
+  "controlLeg": true,
+  "limitSet": true,
+  "benchStarted": true,
+  "readBack": {
+    "expectedFlags": "0x2200",
+    "expectedJobMemoryLimit": 2147483648,
+    "afterCreate": {
+      "flags": "0x2200",
+      "jobMemoryLimit": 2147483648,
+      "processMemoryLimit": 0,
+      "peakJobMemoryUsed": 0,
+      "peakProcessMemoryUsed": 0
+    },
+    "afterAssign": {
+      "flags": "0x2200",
+      "jobMemoryLimit": 2147483648,
+      "processMemoryLimit": 0,
+      "peakJobMemoryUsed": 86712320,
+      "peakProcessMemoryUsed": 86712320
+    },
+    "equal": true,
+    "note": "a job-wide commit limit is set on this leg"
+  },
+  "probe": {
+    "ran": true,
+    "bytes": 2415919104,
+    "overLimitBytes": 268435456,
+    "smallBytes": 67108864,
+    "smallCommitOk": true,
+    "systemFreeVirtualMemoryBytes": 17597603840,
+    "systemRoomOk": true,
+    "committed": false,
+    "refused": true,
+    "lastError": 1455,
+    "lastErrorName": "ERROR_COMMITMENT_LIMIT",
+    "freed": true,
+    "peakBeforeBytes": 86843392,
+    "peakAfterSmallCommitBytes": 154087424,
+    "peakAfterBytes": 2507501568,
+    "peakIncludesProbe": true,
+    "jobMemoryLimitMessagesAfterProbe": 1
+  },
+  "limitNotEnforced": false,
+  "controlLegExpected": true,
+  "completionPort": {
+    "attached": true,
+    "error": null,
+    "jobMemoryLimitMessages": 2,
+    "processMemoryLimitMessages": 0,
+    "abnormalExitMessages": 0,
+    "newProcessMessages": 20,
+    "exitProcessMessages": 12,
+    "otherMessages": 0,
+    "firstJobMemoryLimitPid": 2992
+  },
+  "phase": "finished",
+  "peakJobMemoryBytes": 2507501568,
+  "peakProcessMemoryBytes": 2507501568,
+  "peakJobSamples": {
+    "firstSample": 2507501568,
+    "lastSample": 2507501568,
+    "ticks": 358,
+    "final": 2507501568
+  },
+  "readBackAtEnd": {
+    "flags": "0x2200",
+    "jobMemoryLimit": 2147483648,
+    "processMemoryLimit": 0,
+    "peakJobMemoryUsed": 2507501568,
+    "peakProcessMemoryUsed": 2507501568
+  },
+  "escapes": 0,
+  "escapedPids": [],
+  "membershipSamples": 358,
+  "chromeProcessesSeenMax": 8,
+  "unknownMembershipMax": 0,
+  "benchExitCode": 124,
+  "timedOut": true,
+  "benchProgress": {
+    "rowsWritten": 0,
+    "completedRuns": 0,
+    "failureReason": null,
+    "lastLogLine": "cache phase done",
+    "lastErrorLine": ""
+  },
+  "control": {
+    "expected": "the benchmark must not complete under this limit",
+    "benchCompleted": false,
+    "outcome": "timed_out",
+    "verdict": "control_passed",
+    "failureReason": null,
+    "completedRuns": 0,
+    "rowsWritten": 0,
+    "lastLogLine": "cache phase done",
+    "lastErrorLine": "",
+    "legExitCode": 0
+  },
+  "legExitCode": 0
+}

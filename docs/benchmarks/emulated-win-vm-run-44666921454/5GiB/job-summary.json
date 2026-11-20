@@ -1,0 +1,94 @@
+{
+  "summaryVersion": 2,
+  "cap": "5GiB",
+  "limitBytes": 5368709120,
+  "limitFlags": "0x2200",
+  "structSize": 144,
+  "label": "emulated: GitHub-hosted Windows Server 2025 Datacenter VM, x64, 4 vCPU, 16 GB RAM, pwsh, node and Chrome process tree under a job commit limit of 5368709120 bytes; not a laptop",
+  "controlLeg": false,
+  "limitSet": true,
+  "benchStarted": true,
+  "readBack": {
+    "expectedFlags": "0x2200",
+    "expectedJobMemoryLimit": 5368709120,
+    "afterCreate": {
+      "flags": "0x2200",
+      "jobMemoryLimit": 5368709120,
+      "processMemoryLimit": 0,
+      "peakJobMemoryUsed": 0,
+      "peakProcessMemoryUsed": 0
+    },
+    "afterAssign": {
+      "flags": "0x2200",
+      "jobMemoryLimit": 5368709120,
+      "processMemoryLimit": 0,
+      "peakJobMemoryUsed": 87171072,
+      "peakProcessMemoryUsed": 87171072
+    },
+    "equal": true,
+    "note": "a job-wide commit limit is set on this leg"
+  },
+  "probe": {
+    "ran": true,
+    "bytes": 5637144576,
+    "overLimitBytes": 268435456,
+    "smallBytes": 67108864,
+    "smallCommitOk": true,
+    "systemFreeVirtualMemoryBytes": 17659744256,
+    "systemRoomOk": true,
+    "committed": false,
+    "refused": true,
+    "lastError": 1455,
+    "lastErrorName": "ERROR_COMMITMENT_LIMIT",
+    "freed": true,
+    "peakBeforeBytes": 87236608,
+    "peakAfterSmallCommitBytes": 154476544,
+    "peakAfterBytes": 5735489536,
+    "peakIncludesProbe": false,
+    "jobMemoryLimitMessagesAfterProbe": 1
+  },
+  "limitNotEnforced": false,
+  "controlLegExpected": false,
+  "completionPort": {
+    "attached": true,
+    "error": null,
+    "jobMemoryLimitMessages": 3,
+    "processMemoryLimitMessages": 0,
+    "abnormalExitMessages": 0,
+    "newProcessMessages": 37,
+    "exitProcessMessages": 36,
+    "otherMessages": 0,
+    "firstJobMemoryLimitPid": 9744
+  },
+  "phase": "finished",
+  "peakJobMemoryBytes": 6092845056,
+  "peakProcessMemoryBytes": 5735489536,
+  "peakJobSamples": {
+    "firstSample": 5735489536,
+    "lastSample": 6092845056,
+    "ticks": 325,
+    "final": 6092845056
+  },
+  "readBackAtEnd": {
+    "flags": "0x2200",
+    "jobMemoryLimit": 5368709120,
+    "processMemoryLimit": 0,
+    "peakJobMemoryUsed": 6092845056,
+    "peakProcessMemoryUsed": 5735489536
+  },
+  "escapes": 0,
+  "escapedPids": [],
+  "membershipSamples": 325,
+  "chromeProcessesSeenMax": 8,
+  "unknownMembershipMax": 0,
+  "benchExitCode": 0,
+  "timedOut": false,
+  "benchProgress": {
+    "rowsWritten": 6,
+    "completedRuns": 6,
+    "failureReason": null,
+    "lastLogLine": "question set: 24 of 36 answerable questions correct with the correct source page, over all 6 runs (not selected)",
+    "lastErrorLine": ""
+  },
+  "legExitCode": 0
+}

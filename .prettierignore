@@ -13,3 +13,5 @@ src/generated/
 /deps/
 .cache/
 test/fixtures/pdf/
+# a CI artifact kept as the run wrote it (line endings aside): never reformatted
+docs/benchmarks/emulated-win-vm-run-*/

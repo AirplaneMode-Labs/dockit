@@ -1,0 +1,79 @@
+{
+  "summaryVersion": 2,
+  "cap": "none",
+  "limitBytes": null,
+  "limitFlags": "0x2000",
+  "structSize": 144,
+  "label": "emulated: GitHub-hosted Windows Server 2025 Datacenter VM, x64, 4 vCPU, 16 GB RAM, pwsh, node and Chrome process tree with no job limit; not a laptop",
+  "controlLeg": false,
+  "limitSet": false,
+  "benchStarted": true,
+  "readBack": {
+    "expectedFlags": "0x2000",
+    "expectedJobMemoryLimit": 0,
+    "afterCreate": {
+      "flags": "0x2000",
+      "jobMemoryLimit": 0,
+      "processMemoryLimit": 0,
+      "peakJobMemoryUsed": 0,
+      "peakProcessMemoryUsed": 0
+    },
+    "afterAssign": {
+      "flags": "0x2000",
+      "jobMemoryLimit": 0,
+      "processMemoryLimit": 0,
+      "peakJobMemoryUsed": 87142400,
+      "peakProcessMemoryUsed": 87142400
+    },
+    "equal": true,
+    "note": "no limit is set on this leg: JobMemoryLimit reads 0 and only KILL_ON_JOB_CLOSE (0x2000) is on"
+  },
+  "probe": {
+    "ran": false,
+    "reason": "no limit is set on this leg, so there is nothing to probe"
+  },
+  "limitNotEnforced": false,
+  "controlLegExpected": false,
+  "completionPort": {
+    "attached": true,
+    "error": null,
+    "jobMemoryLimitMessages": 0,
+    "processMemoryLimitMessages": 0,
+    "abnormalExitMessages": 0,
+    "newProcessMessages": 39,
+    "exitProcessMessages": 38,
+    "otherMessages": 0,
+    "firstJobMemoryLimitPid": null
+  },
+  "phase": "finished",
+  "peakJobMemoryBytes": 6081593344,
+  "peakProcessMemoryBytes": 5612662784,
+  "peakJobSamples": {
+    "firstSample": 104140800,
+    "lastSample": 6081593344,
+    "ticks": 424,
+    "final": 6081593344
+  },
+  "readBackAtEnd": {
+    "flags": "0x2000",
+    "jobMemoryLimit": 0,
+    "processMemoryLimit": 0,
+    "peakJobMemoryUsed": 6081593344,
+    "peakProcessMemoryUsed": 5612662784
+  },
+  "escapes": 0,
+  "escapedPids": [],
+  "membershipSamples": 424,
+  "chromeProcessesSeenMax": 9,
+  "unknownMembershipMax": 0,
+  "benchExitCode": 0,
+  "timedOut": false,
+  "benchProgress": {
+    "rowsWritten": 6,
+    "completedRuns": 6,
+    "failureReason": null,
+    "lastLogLine": "question set: 24 of 36 answerable questions correct with the correct source page, over all 6 runs (not selected)",
+    "lastErrorLine": ""
+  },
+  "legExitCode": 0
+}
