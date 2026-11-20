@@ -1,0 +1,199 @@
+name: bench-windows
+
+# The first Windows run of the dockit benchmark (Sprint 7, B6, TD-113). It is dispatched by hand, once, after the push: it never runs on a push, a pull
+# request or a schedule, and it takes no input. An ubuntu job builds dist exactly as pages.yml does and hands it over as a one-day artefact; a windows-latest
+# job runs `npm run bench:e2e` against it once per leg of a fixed matrix: no job limit, then the pwsh, node and Chrome process tree inside a Windows Job
+# Object with a committed-memory limit of 8, 6 and 5 GiB (scripts/win/run-capped.ps1). The runner is a GitHub-hosted Windows Server VM, NOT a laptop, and
+# a commit limit is not a physical-memory limit: every row says so in its environment column, laptop_8gb stays "not measured on 8 GB" and the Sprint 5
+# done-when stays NOT met. The results are CSVs in separate files, imported into the repository in a follow-up. Nothing here publishes, signs or reads a secret.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-windows
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: build dist (ubuntu-latest)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The sibling refs come from the committed deps.lock.json only; nothing else can change them.
+      - name: Read the locked sibling commits
+        id: lock
+        shell: bash
+        run: |
+          node -e '
+            const lock = JSON.parse(require("node:fs").readFileSync("deps.lock.json", "utf8"));
+            for (const dep of ["runtime", "localdata", "pagetriage", "glyphsift"]) {
+              const c = lock.deps[dep].commit;
+              if (!/^[0-9a-f]{40}$/.test(c)) { console.error(dep + ": not a 40-hex commit"); process.exit(1); }
+              console.log(dep + "=" + c);
+            }
+          ' >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AirplaneMode-Labs/runtime
+          ref: ${{ steps.lock.outputs.runtime }}
+          path: deps/runtime
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AirplaneMode-Labs/localdata
+          ref: ${{ steps.lock.outputs.localdata }}
+          path: deps/localdata
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AirplaneMode-Labs/pagetriage
+          ref: ${{ steps.lock.outputs.pagetriage }}
+          path: deps/pagetriage
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AirplaneMode-Labs/glyphsift
+          ref: ${{ steps.lock.outputs.glyphsift }}
+          path: deps/glyphsift
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install from the lockfile
+        shell: bash
+        run: npm ci --ignore-scripts
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: '1.98'
+          targets: wasm32-unknown-unknown
+      # wasm-bindgen and wasm-opt come only from these two scripts (sha256-pinned release binaries).
+      - name: Install the pinned WASM tools (pagetriage)
+        shell: bash
+        run: bash deps/pagetriage/scripts/install-wasm-tools.sh
+      - name: Install the pinned WASM tools (glyphsift)
+        shell: bash
+        run: bash deps/glyphsift/scripts/install-wasm-tools.sh
+      # Restore only: this workflow never writes a cache entry. The entry pages.yml saved for the same lock is used when it exists.
+      - name: Restore the model cache (restore only)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: deps/runtime/.cache/models
+          key: models-${{ hashFiles('deps.lock.json') }}
+      # A restored cache is data from an earlier run: every file that is there is re-hashed against runtime's committed pins before anything uses it.
+      - name: Re-hash the restored model files against the committed pins
+        shell: bash
+        run: node scripts/verify-model-cache.mjs --checkouts deps
+      # runtime's model fetcher (run by assemble-deps for both models) is https only, sends no token and re-hashes every file it downloads
+      - name: Assemble the four sibling builds and the signed model bundle
+        shell: bash
+        run: node scripts/assemble-deps.mjs --checkouts deps
+      - name: Build
+        shell: bash
+        run: npm run build
+        env:
+          VITE_BUILD_SHA: ${{ github.sha }}
+      # GitHub documents a 1 GB limit for a Pages site; the same guard as pages.yml, so this build is the one the demo would ship.
+      - name: Record the size of dist and refuse a build over 1 GB
+        shell: bash
+        run: |
+          bytes=$(du -sk dist | awk '{print $1 * 1024}')
+          echo "dist total: $bytes bytes"
+          if [ "$bytes" -gt 1000000000 ]; then echo "dist is over 1 GB ($bytes bytes)" >&2; exit 1; fi
+      # One line per file, hidden files left out (the upload leaves them out too: dist/.vite holds only the build manifest, which no page requests).
+      - name: Write dist-SHA256SUMS
+        shell: bash
+        run: |
+          find dist -type f -not -path '*/.*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum --binary > dist-SHA256SUMS
+          echo "dist-SHA256SUMS: $(wc -l < dist-SHA256SUMS | tr -d ' ') files"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dockit-dist-${{ github.sha }}
+          path: |
+            dist/
+            dist-SHA256SUMS
+          retention-days: 1
+          if-no-files-found: error
+          include-hidden-files: false
+          compression-level: 1
+
+  bench:
+    name: bench (windows-latest, ${{ matrix.cap }})
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        cap: [none, 8GiB, 6GiB, 5GiB]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install from the lockfile
+        shell: bash
+        run: npm ci --ignore-scripts
+      - name: Download the dist of this run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dockit-dist-${{ github.sha }}
+      # Before anything serves it: every file of dist is the one the ubuntu job hashed, and there is no file the sums do not name.
+      - name: Check dist-SHA256SUMS on this runner
+        shell: bash
+        run: |
+          test "$(find dist -type f -not -path '*/.*' | wc -l | tr -d ' ')" = "$(wc -l < dist-SHA256SUMS | tr -d ' ')"
+          sha256sum --binary --check --strict --quiet dist-SHA256SUMS
+          echo "dist-SHA256SUMS ok: $(wc -l < dist-SHA256SUMS | tr -d ' ') files"
+      - name: Record the machine facts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path bench-out | Out-Null
+          $cs = Get-CimInstance Win32_ComputerSystem
+          $os = Get-CimInstance Win32_OperatingSystem
+          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+          $pf = @(Get-CimInstance Win32_PageFileUsage)
+          $chrome = try { (Get-Item 'C:\Program Files\Google\Chrome\Application\chrome.exe').VersionInfo.ProductVersion } catch { 'unavailable' }
+          $defender = try { (Get-MpComputerStatus).RealTimeProtectionEnabled } catch { 'unavailable' }
+          @(
+            "TotalPhysicalMemory: $($cs.TotalPhysicalMemory)",
+            "NumberOfLogicalProcessors: $($cs.NumberOfLogicalProcessors)",
+            "Processor: $($cpu.Name)",
+            "OS: $($os.Caption) $($os.Version) $($os.OSArchitecture)",
+            "PageFile: $(($pf | ForEach-Object { "$($_.Name) allocated $($_.AllocatedBaseSize) MB" }) -join '; ')",
+            "Chrome: $chrome",
+            "Defender RealTimeProtectionEnabled: $defender"
+          ) | Set-Content -Path bench-out/env.txt
+          Get-Content bench-out/env.txt
+      - name: Run the benchmark inside the Job Object
+        shell: pwsh
+        env:
+          CAP: ${{ matrix.cap }}
+        run: |
+          & ./scripts/win/run-capped.ps1 -Cap $env:CAP -OutDir bench-out
+      - name: Fill the job columns of the CSV
+        if: always()
+        shell: bash
+        run: node scripts/bench-emulated-merge.mjs --csv bench-out/e2e-emulated-win-vm.csv --summary bench-out/job-summary.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: bench-windows-${{ matrix.cap }}-${{ github.sha }}
+          path: bench-out/
+          retention-days: 7
+          if-no-files-found: error
+          include-hidden-files: false
