@@ -243,9 +243,14 @@ export function App({
               hosted by the customer), and its answers can be wrong: check the source pages.
             </li>
             <li>
-              Single-threaded WebAssembly: answers take seconds. Not measured on an 8 GB Windows
-              laptop; the figures on the benchmarks page are from an Apple M5 Pro with 48 GB, and
-              every one says not measured on 8 GB.
+              Single-threaded WebAssembly: answers take seconds. A Windows or 8 GB laptop figure
+              does not exist yet: the figures on the benchmarks page are from an Apple M5 Pro with
+              48 GB, and every one says not measured on 8 GB.
+            </li>
+            <li>
+              An emulated Windows figure (a GitHub-hosted virtual machine, not a laptop) is pending
+              the first run of the manual benchmark, which is written and has not run. It will say
+              what it is on every row, and it will not fill an 8 GB laptop cell.
             </li>
             <li>
               No Hindi or other Indic answer quality claim: the glyph gate is tested on Devanagari
