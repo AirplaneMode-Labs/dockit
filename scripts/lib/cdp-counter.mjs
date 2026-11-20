@@ -113,7 +113,8 @@ export async function connectCdp(userDataDir, { timeoutMs = 15000 } = {}) {
       throw new Error(`${file} did not appear: start Chrome with --remote-debugging-port=0`);
     await new Promise((r) => setTimeout(r, 100));
   }
-  const [port, path] = readFileSync(file, 'utf8').split('\n');
+  // two lines, the port and the browser's socket path; a CRLF (Windows) would leave a carriage return in the URL, so either line ending is split on
+  const [port, path] = readFileSync(file, 'utf8').split(/\r?\n/u);
   const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`);
   await new Promise((res, rej) => {
     ws.addEventListener('open', res, { once: true });

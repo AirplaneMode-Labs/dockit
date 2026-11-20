@@ -47,6 +47,8 @@ describe('the Playwright launch arguments', () => {
     expect(launchOptions({ sandbox: false }).chromiumSandbox).toBe(false);
     expect(launchOptions({}).chromiumSandbox).toBe(false); // the local default is unchanged: the committed macOS figures stay comparable
     expect(launchOptions({ sandbox: true }).channel).toBe('chrome');
+    // a cold Windows VM may need more than Playwright's 30 s default for the first start of a sandboxed Chrome
+    expect(launchOptions({}).timeout).toBeGreaterThan(30_000);
     expect(launchOptions({ sandbox: true }).args).toEqual(launchArgs({ watch: true }));
     const bench = readFileSync(join(root, 'scripts', 'bench-e2e.mjs'), 'utf8');
     expect(bench).toMatch(/sandbox: EMULATED/u);

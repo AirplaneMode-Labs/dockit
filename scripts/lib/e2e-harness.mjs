@@ -77,6 +77,9 @@ export const launchArgs = ({ watch = true } = {}) => [
 export const launchOptions = ({ headless = true, watch = true, sandbox = false } = {}) => ({
   channel: 'chrome',
   headless,
+  // Playwright waits 30 s for Chrome to start by default; the first start on a cold Windows VM (a sandboxed Chrome under a Job Object, first-run work, a scanner on
+  // every file) is the one place that could exceed it, and a longer wait changes no figure: the benchmark clocks start after the page is ready
+  timeout: 120_000,
   serviceWorkers: 'allow',
   chromiumSandbox: sandbox,
   args: launchArgs({ watch }),

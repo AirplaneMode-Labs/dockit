@@ -7,6 +7,7 @@ export function launchArgs(o?: { watch?: boolean }): string[];
 export function launchOptions(o?: { headless?: boolean; watch?: boolean; sandbox?: boolean }): {
   channel: 'chrome';
   headless: boolean;
+  timeout: number;
   serviceWorkers: 'allow';
   chromiumSandbox: boolean;
   args: string[];
