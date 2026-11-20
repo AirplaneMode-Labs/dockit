@@ -140,6 +140,10 @@ describe('the label rules (no runner reads as a laptop or as an 8 GB machine)', 
       'the label shape run-capped.ps1 builds from WMI facts',
       'emulated: GitHub-hosted Windows Server 2025 Datacenter VM, x64, 4 vCPU, 16 GB RAM, pwsh, node and Chrome process tree under a job commit limit of 8589934592 bytes; not a laptop',
     ],
+    [
+      'the 2 GiB control leg label run-capped.ps1 builds (the limit in bytes, and the words control leg)',
+      'emulated: GitHub-hosted Windows Server 2025 Datacenter VM, x64, 4 vCPU, 16 GB RAM, pwsh, node and Chrome process tree under a job commit limit of 2147483648 bytes (control leg, expected to fail); not a laptop',
+    ],
     ['300 characters', `emulated: ${'a'.repeat(300)}; not a laptop`],
   ];
   it.each(good)('accepts %s', (_why, label) => {

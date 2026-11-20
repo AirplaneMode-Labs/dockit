@@ -113,16 +113,17 @@ describe('laptop_8gb column (BUG-T1-S5-07)', () => {
   });
 
   // B6 / TD-113: the emulated Windows results are separate files; when they are committed they obey the same rule and name what they are
+  // the runs file may still have the header written before the limit evidence existed (the first dispatch of bench-windows): both headers are accepted
   it.each([
-    ['e2e-emulated-win-vm.csv', cols.E2E_EMULATED_COLUMNS],
-    ['e2e-emulated-win-vm-questions.csv', cols.Q_EMULATED_COLUMNS],
+    ['e2e-emulated-win-vm.csv', [...cols.EMULATED_HEADERS]],
+    ['e2e-emulated-win-vm-questions.csv', [cols.Q_EMULATED_COLUMNS.join(',')]],
   ])(
     '%s, when it is committed, has its own header, an environment on every row and the 8 GB phrase on every row',
-    (f, columns) => {
+    (f, headers) => {
       const file = join(root, 'docs', 'benchmarks', f);
-      if (!existsSync(file)) return; // nothing to check until the first dispatch of bench-windows has been imported
+      if (!existsSync(file)) return; // nothing to check in a checkout without the imported results of bench-windows
       const text = readFileSync(file, 'utf8');
-      expect(text.split('\n')[0]).toBe(columns.join(','));
+      expect(headers).toContain(text.split('\n')[0]);
       for (const r of parseCsv(text) as Record<string, string>[]) {
         expect(r['laptop_8gb']).toBe(PHRASE);
         expect(() => cols.validateEnvironmentLabel(r['environment']!)).not.toThrow();

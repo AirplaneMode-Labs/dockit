@@ -144,7 +144,7 @@ describe('CHANGELOG: earlier history is dated (T3-R1-05)', () => {
 });
 
 // Sprint 7 (B6, TD-101, TD-116, TD-120): the README names its live demo on the first screen, the commit its figures were measured on, the Windows benchmark
-// that has not run, and that dockit is never published to a registry.
+// that has run once with its job commit limit unproven, and that dockit is never published to a registry.
 describe('README, Sprint 7', () => {
   const csv = (f: string) =>
     readFileSync(new URL(`../docs/benchmarks/${f}`, import.meta.url), 'utf8')
@@ -170,17 +170,38 @@ describe('README, Sprint 7', () => {
     expect(flat).toMatch(/quiet host/u);
   });
 
-  it('describes the Windows benchmark under an emulated memory cap, says it has not run, and keeps every 8 GB cell and the done-when as they were', () => {
+  it('describes the Windows benchmark under an emulated memory cap, records its one run (44656249868) and says the limit is unproven, and keeps every 8 GB cell and the done-when as they were', () => {
     const s = section('Benchmarks').replace(/\s+/g, ' ');
     expect(s).toContain('bench-windows');
     expect(s).toContain('Windows Job Object');
     expect(s).toContain('pwsh, node and Chrome process tree');
     expect(s).toMatch(/not a laptop/u);
-    expect(s).toMatch(/has not run/u);
+    expect(s).toContain('**The workflow has run once.**');
+    expect(s).toContain('run 44656249868');
+    expect(s).toContain('5705baab8cdf');
+    expect(s).toMatch(/limit was never read back/u);
+    expect(s).toMatch(/limit unproven/u);
+    expect(s).not.toMatch(/has not run|written and has not|pending its first run/u);
+    // the change that settles the limit: read-back, probe, control leg; written, and no Windows run has tested it
+    expect(s).toContain('no Windows run has tested it yet');
+    expect(s).toContain('reads the limit back from the system');
+    expect(s).toContain('a 2 GiB control, is green only when the benchmark fails to complete');
+    expect(s).toContain('limit proven in force (probe refused, read-back equal)');
     expect(s).toMatch(/commit limit is not a physical-memory limit/u);
     expect(s).toContain('scripts/win/README.md');
     expect(s).toMatch(/2 vCPU, 8 GB[^.]*not built/u);
     expect(flat).toContain('8 GB Windows done-when NOT met (owner runbook step 5)');
+  });
+
+  it('docs/release.md says the Windows run happened once, that it is emulated, and that its limit is unproven', () => {
+    const rel = readFileSync(new URL('../docs/release.md', import.meta.url), 'utf8').replace(
+      /\s+/g,
+      ' ',
+    );
+    expect(rel).toMatch(/`bench-windows` workflow ran once \(run 44656249868/u);
+    expect(rel).toMatch(/emulated \(a GitHub-hosted VM, not a laptop\)/u);
+    expect(rel).toMatch(/limit is unproven/u);
+    expect(rel).not.toMatch(/written and has not run/u);
   });
 
   it('says dockit is never published to a registry and that the Pages deploy is the release (TD-120), and docs/release.md says it in one sentence', () => {
@@ -191,10 +212,12 @@ describe('README, Sprint 7', () => {
     expect(rel).toMatch(/not measured on 8 GB/u);
   });
 
-  it("the Limitations section says there is no Windows figure and the emulated one is pending, and that the local Playwright launch has Chrome's sandbox off", () => {
+  it("the Limitations section says there is no Windows laptop figure and the one emulated run has an unproven limit, and that the local Playwright launch has Chrome's sandbox off", () => {
     const lim = section('Limitations').replace(/\s+/g, ' ');
-    expect(lim).toMatch(/No Windows figure exists yet/u);
-    expect(lim).toMatch(/emulated Windows run is written and has not run/u);
+    expect(lim).toMatch(/No Windows laptop figure exists/u);
+    expect(lim).toMatch(/emulated Windows run[^.]*ran once/u);
+    expect(lim).toMatch(/limit was in effect is unproven/u);
+    expect(lim).not.toMatch(/has not run|nothing has run on Windows/u);
     expect(lim).toMatch(/Playwright[^.]*sandbox/u);
   });
 });

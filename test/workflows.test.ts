@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SPAWN_TEST_TIMEOUT_MS } from './helpers/timeouts.ts';
 import { hasPwsh, pwshParseErrors } from './helpers/pwsh.ts';
+import { CONTROL_CAPS, LEG_CAPS } from '../scripts/lib/bench-columns.mjs';
 
 const wf = (name: string) =>
   readFileSync(join(__dirname, '..', '.github', 'workflows', name), 'utf8');
@@ -203,7 +204,9 @@ describe('bench-windows.yml: manual dispatch only, a fixed matrix, nothing a for
   it('has exactly a build job and a bench job, named as the push list names them', () => {
     expect(Object.keys(j)).toEqual(['build', 'bench']);
     expect(j['build']).toMatch(/\n {4}name: build dist \(ubuntu-latest\)\n/u);
-    expect(j['bench']).toMatch(/\n {4}name: bench \(windows-latest, \$\{\{ matrix\.cap \}\}\)\n/u);
+    expect(j['bench']).toMatch(
+      /\n {4}name: bench \(windows-latest, \$\{\{ matrix\.cap \}\}\$\{\{ matrix\.control && ', control' \|\| '' \}\}\)\n/u,
+    );
   });
 
   it('both jobs have contents: read and nothing else: no id-token, no attestations, no pages, no secrets', () => {
@@ -315,23 +318,60 @@ describe('bench-windows.yml: the bench job (windows-latest), one leg per cap', (
   const all = steps(bench);
   const find = (needle: RegExp) => all.find((s) => needle.test(s));
 
-  it('needs the build job, runs on windows-latest for at most 90 minutes, and does not stop the other legs when one fails', () => {
+  it('needs the build job, runs on windows-latest for at most 90 minutes (20 on the control leg), and does not stop the other legs when one fails', () => {
     expect(bench).toMatch(/\n {4}needs: build\n/u);
     expect(bench).toMatch(/\n {4}runs-on: windows-latest\n/u);
-    expect(bench).toMatch(/\n {4}timeout-minutes: 90\n/u);
+    expect(bench).toMatch(/\n {4}timeout-minutes: \$\{\{ matrix\.control && 20 \|\| 90 \}\}\n/u);
     expect(bench).toMatch(/fail-fast: false/u);
   });
 
-  it('the matrix is exactly none, 8GiB, 6GiB and 5GiB, written out, with no include or exclude', () => {
-    expect(bench).toMatch(/\n {6}matrix:\n {8}cap: \[none, 8GiB, 6GiB, 5GiB\]\n/u);
-    expect(bench).not.toMatch(/include:|exclude:/u);
+  it('the matrix is none, 8GiB, 6GiB and 5GiB written out, plus exactly one include: the 2GiB control leg; no exclude', () => {
+    expect(bench).toMatch(
+      /\n {6}matrix:\n {8}cap: \[none, 8GiB, 6GiB, 5GiB\]\n {8}include:\n(?: {10}#.*\n)* {10}- cap: 2GiB\n {12}control: true\n {4}steps:/u,
+    );
+    expect(bench).not.toMatch(/exclude:/u);
+    expect(bench.match(/include:/gu)).toHaveLength(1);
+    // the one control cap of the workflow is the one of the script and of the column list, and no other cap is a control
+    expect(CONTROL_CAPS).toEqual(['2GiB']);
+    expect(Object.keys(LEG_CAPS)).toEqual(['none', '8GiB', '6GiB', '5GiB', '2GiB']);
+    const ps1 = readFileSync(join(__dirname, '..', 'scripts', 'win', 'run-capped.ps1'), 'utf8');
+    expect(ps1).toContain("$IsControl = $Cap -ceq '2GiB'");
+    expect(ps1).toContain("-cnotin @('none', '8GiB', '6GiB', '5GiB', '2GiB')");
+  });
+
+  it('no step and no job may continue on error, and the control leg is green or red by the exit code of run-capped.ps1 alone', () => {
+    expect(text).not.toMatch(/continue-on-error/u);
+    const run = find(/run-capped\.ps1/u)!;
+    expect(run).not.toMatch(/\bif:/u); // it always runs, and what it exits with is the leg's result
+    expect(run).not.toMatch(/\|\||\bexit\b|\$LASTEXITCODE|-ErrorAction/u);
+  });
+
+  it('the control leg has a short job limit (20 minutes) and the script stops its benchmark earlier (12 minutes); matrix.control appears only in the job name and the timeout', () => {
+    const ps1 = readFileSync(join(__dirname, '..', 'scripts', 'win', 'run-capped.ps1'), 'utf8');
+    expect(ps1).toMatch(/\$ControlTimeoutMinutes = 12/u);
+    expect(12).toBeLessThan(20);
+    const lines = text.split('\n').filter((l) => l.includes('matrix.control'));
+    expect(lines.length).toBe(2);
+    expect(lines.filter((l) => l.startsWith('    name: bench ('))).toHaveLength(1);
+    expect(lines.filter((l) => l.startsWith('    timeout-minutes: '))).toHaveLength(1);
+  });
+
+  it('the header says what the control leg is: it must not complete, it is red when it does, and it has no CSV when it fails early', () => {
+    const head = text.slice(0, text.indexOf('\non:\n')).replace(/\n# ?/gu, ' ');
+    expect(head).toContain('2 GiB');
+    expect(head).toMatch(/CONTROL/u);
+    expect(head).toMatch(/must NOT complete/u);
+    expect(head).toMatch(/red, because that would mean the cap does nothing/u);
+    expect(head).toMatch(/no CSV/u);
   });
 
   it('matrix.cap appears only in the job name, one step env and the artefact name', () => {
     const lines = text.split('\n').filter((l) => l.includes('matrix.cap'));
     expect(lines.length).toBe(3);
     const kinds = lines.map((l) =>
-      /^ {4}name: bench \(windows-latest, \$\{\{ matrix\.cap \}\}\)$/u.test(l)
+      /^ {4}name: bench \(windows-latest, \$\{\{ matrix\.cap \}\}\$\{\{ matrix\.control && ', control' \|\| '' \}\}\)$/u.test(
+        l,
+      )
         ? 'job-name'
         : /^ {10}CAP: \$\{\{ matrix\.cap \}\}$/u.test(l)
           ? 'env'
