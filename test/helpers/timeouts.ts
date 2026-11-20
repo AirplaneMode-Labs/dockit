@@ -25,3 +25,10 @@ export const PDFJS_OPEN_GUARD_MS = 20_000;
  * fail them for no reason. 30 s again, for the same reason as above.
  */
 export const SCRATCH_GIT_TEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Tests that start a node child process (scripts/bench-e2e.mjs imports Playwright before it reads its arguments; the merge, cache and lock checks are small scripts):
+ * well under a second locally, but process start-up is the slow part of a cold Windows runner (see SCRATCH_GIT_TEST_TIMEOUT_MS), so these files raise their per-test
+ * limit to 30 s, with vi.setConfig, instead of leaving vitest's 5 s default to decide whether a cold runner is a failure.
+ */
+export const SPAWN_TEST_TIMEOUT_MS = 30_000;

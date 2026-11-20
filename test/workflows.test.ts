@@ -11,11 +11,16 @@ const PINS: Record<string, [string, string]> = {
   'actions/setup-node': ['949feb2413d6458794dcd2491c4babbbce0c15c1', 'v7.1.0'],
   'actions/setup-python': ['6d4fd22b20465ccc0f7354476588e8df7c9ca0e0', 'v7.1.0'],
   'actions/cache': ['55cc8345863c7cc4c66a329aec7e433d2d1c52a9', 'v6.1.0'],
+  // Sprint 7 rows (TD-119): restore-only, at the actions/cache SHA, in the bench-windows build job only
+  'actions/cache/restore': ['55cc8345863c7cc4c66a329aec7e433d2d1c52a9', 'v6.1.0'],
   'actions/configure-pages': ['45bfe0192ca1faeb007ade9deae92b16b8254a0d', 'v6.0.0'],
   'actions/upload-pages-artifact': ['fc324d3547104276b827a68afc52ff2a11cc49c9', 'v5.0.0'],
   'actions/deploy-pages': ['368f82528645a54fb793d4d04e342629a3f51346', 'v5.0.1'],
   'dtolnay/rust-toolchain': ['683b588c487a69d01f6c6ddf40f036ff682cc2c8', 'v1'],
   'Swatinem/rust-cache': ['d1527c8f67ef9af357290475d4af4b0fab8f12e0', 'v2.9.3'],
+  // Sprint 7 rows: bench-windows.yml only (the hand-off of dist and the result uploads)
+  'actions/upload-artifact': ['cf430e030ddbb5b0abf93d22962f4752f3646cd9', 'v7.0.2'],
+  'actions/download-artifact': ['9000827ccba6bdab643e8b6fd33ac0654aef8333', 'v8.0.2'],
 };
 
 /** Splits a workflow into its top-level jobs: name -> text of the job block. */
@@ -29,7 +34,7 @@ function jobs(text: string): Record<string, string> {
   return out;
 }
 
-describe.each(['ci.yml', 'pages.yml'])('%s', (file) => {
+describe.each(['ci.yml', 'pages.yml', 'bench-windows.yml'])('%s', (file) => {
   const text = wf(file);
 
   it('every uses: is owner/repo@<40-hex> # <tag>, with the SHA and tag from the conventions table', () => {
@@ -157,5 +162,267 @@ describe('pages.yml: the four-sibling build (TD-40)', () => {
     expect(text).not.toMatch(/over 1 GiB/);
     expect(text).toMatch(/find dist -type f -size/);
     expect(text).toMatch(/exit 1/);
+  });
+});
+
+/** The text of one job's `steps:` split into steps: each starts at a line of exactly six spaces and a dash. */
+function steps(jobBody: string): string[] {
+  const at = jobBody.indexOf('\n    steps:\n');
+  return jobBody
+    .slice(at + '\n    steps:\n'.length)
+    .split(/^ {6}- /mu)
+    .slice(1)
+    .map((x) => `- ${x}`);
+}
+
+// B6 (TD-113): the manual Windows benchmark. It is dispatched once by the main session after the push and never runs on a push or a pull request.
+describe('bench-windows.yml: manual dispatch only, a fixed matrix, nothing a fork or a push can reach', () => {
+  const text = wf('bench-windows.yml');
+  const j = jobs(text);
+
+  it('is triggered by workflow_dispatch and by nothing else, and takes no input', () => {
+    expect(text).toMatch(/^on:\n {2}workflow_dispatch:\n/mu);
+    expect(text).not.toMatch(
+      /^ {2}(push|pull_request|pull_request_target|schedule|workflow_run|release|repository_dispatch):/mu,
+    );
+    expect(text).not.toMatch(/^\s+inputs:/mu);
+    expect(text.match(/^on:\n((?: {2}\S.*\n|\n)+)/mu)![1]!.trim()).toBe('workflow_dispatch:');
+  });
+
+  it('serialises runs in the group bench-windows, without cancelling a running benchmark', () => {
+    expect(text).toMatch(
+      /^concurrency:\n {2}group: bench-windows\n {2}cancel-in-progress: false\n/mu,
+    );
+  });
+
+  it('has exactly a build job and a bench job, named as the push list names them', () => {
+    expect(Object.keys(j)).toEqual(['build', 'bench']);
+    expect(j['build']).toMatch(/\n {4}name: build dist \(ubuntu-latest\)\n/u);
+    expect(j['bench']).toMatch(/\n {4}name: bench \(windows-latest, \$\{\{ matrix\.cap \}\}\)\n/u);
+  });
+
+  it('both jobs have contents: read and nothing else: no id-token, no attestations, no pages, no secrets', () => {
+    for (const name of ['build', 'bench']) {
+      expect(j[name], name).toMatch(/\n {4}permissions:\n {6}contents: read\n(?! {6}\S)/u);
+    }
+    expect(text).not.toMatch(
+      /id-token|attestations|pages: write|packages: write|actions: write|secrets\./u,
+    );
+  });
+
+  it('no setup-node cache, no rust-cache and no actions/cache save: the only cache step is restore-only', () => {
+    expect(text).not.toMatch(/^\s+cache: /mu);
+    expect(text).not.toMatch(/Swatinem\/rust-cache/u);
+    expect(text).not.toMatch(/actions\/cache@/u);
+    expect(text.match(/uses: actions\/cache\/restore@/gu)?.length).toBe(1);
+    expect(j['build']).toMatch(/uses: actions\/cache\/restore@/u);
+    expect(j['bench']).not.toMatch(/actions\/cache/u);
+  });
+
+  it('every run: step names its shell (bash or pwsh), and the workflow default is bash', () => {
+    expect(text).toMatch(/defaults:\n {2}run:\n {4}shell: bash/u);
+    for (const name of ['build', 'bench']) {
+      for (const s of steps(j[name]!)) {
+        if (/^\s+run:/mu.test(s)) expect(s, s.slice(0, 80)).toMatch(/^\s+shell: (bash|pwsh)$/mu);
+      }
+    }
+  });
+
+  it('matrix and job values never reach a script through ${{ }} inside run: a run block holds no expression', () => {
+    for (const name of ['build', 'bench']) {
+      for (const s of steps(j[name]!)) {
+        // the command (or the '|' of a block) and every following line indented by ten spaces or more
+        const m = /^ {8}run: (.*)\n((?: {10}.*(?:\n|$)|\n)*)/mu.exec(s);
+        if (m !== null) expect(`${m[1]}\n${m[2]}`, s.slice(0, 80)).not.toContain('${{');
+      }
+    }
+  });
+});
+
+describe('bench-windows.yml: the build job (ubuntu-latest)', () => {
+  const text = wf('bench-windows.yml');
+  const build = jobs(text)['build']!;
+  const at = (needle: string) => build.indexOf(needle);
+
+  it('reads the sibling commits from deps.lock.json and checks out exactly the four siblings, as pages.yml does', () => {
+    expect(build).toMatch(/runs-on: ubuntu-latest/u);
+    expect(build).toMatch(/id: lock/u);
+    for (const dep of ['runtime', 'localdata', 'pagetriage', 'glyphsift'])
+      expect(build, dep).toMatch(
+        new RegExp(
+          `repository: AirplaneMode-Labs/${dep}\\n\\s+ref: \\$\\{\\{ steps\\.lock\\.outputs\\.${dep} \\}\\}\\n\\s+path: deps/${dep}\\n\\s+persist-credentials: false`,
+          'u',
+        ),
+      );
+    expect([...build.matchAll(/repository: (\S+)/gu)].map((m) => m[1]).sort()).toEqual([
+      'AirplaneMode-Labs/glyphsift',
+      'AirplaneMode-Labs/localdata',
+      'AirplaneMode-Labs/pagetriage',
+      'AirplaneMode-Labs/runtime',
+    ]);
+  });
+
+  it('builds with Rust 1.98 and the two pinned install scripts, then assembles and builds, in that order', () => {
+    expect(build).toMatch(/toolchain: ["']1\.98["']/u);
+    expect(build).toMatch(/bash deps\/pagetriage\/scripts\/install-wasm-tools\.sh/u);
+    expect(build).toMatch(/bash deps\/glyphsift\/scripts\/install-wasm-tools\.sh/u);
+    expect(build).not.toMatch(/cargo install|brew |apt(-get)? install|wasm-bindgen-cli/u);
+    expect(at('install-wasm-tools.sh')).toBeLessThan(at('actions/cache/restore'));
+    expect(at('node scripts/assemble-deps.mjs --checkouts deps')).toBeGreaterThan(0);
+    expect(at('run: npm run build')).toBeGreaterThan(
+      at('node scripts/assemble-deps.mjs --checkouts deps'),
+    );
+  });
+
+  it("restores the model cache restore-only under the pages.yml key, then re-hashes every restored model file against runtime's committed pins before assembling", () => {
+    expect(build).toMatch(/path: deps\/runtime\/\.cache\/models/u);
+    expect(build).toMatch(/key: models-\$\{\{ hashFiles\('deps\.lock\.json'\) \}\}/u);
+    const restore = at('actions/cache/restore');
+    const verify = at('node scripts/verify-model-cache.mjs');
+    const assemble = at('node scripts/assemble-deps.mjs --checkouts deps');
+    expect(verify).toBeGreaterThan(restore);
+    expect(assemble).toBeGreaterThan(verify);
+    expect(build).toMatch(/node scripts\/verify-model-cache\.mjs --checkouts deps/u);
+  });
+
+  it('writes dist-SHA256SUMS over every file of dist, then uploads dist and the sums as a one-day artefact named by the commit', () => {
+    expect(build).toMatch(/dist-SHA256SUMS/u);
+    expect(build).toMatch(/sha256sum/u);
+    // BUG-T3-S7-10: binary mode on both sides, so a text-mode ambiguity on Windows Git Bash cannot exist
+    expect(build).toMatch(/xargs -0 sha256sum --binary > dist-SHA256SUMS/u);
+    expect(at('dist-SHA256SUMS')).toBeGreaterThan(at('run: npm run build'));
+    const up = build.slice(at('actions/upload-artifact@'));
+    expect(up).toMatch(/name: dockit-dist-\$\{\{ github\.sha \}\}\n/u);
+    expect(up).toMatch(/retention-days: 1\n/u);
+    expect(up).toMatch(/if-no-files-found: error\n/u);
+    expect(up).toMatch(/include-hidden-files: false\n/u);
+    expect(up).toMatch(/^\s+dist\/\n\s+dist-SHA256SUMS\n/mu);
+  });
+
+  it('refuses a dist over 1 GB with the Pages guard, like pages.yml', () => {
+    expect(build).toMatch(/-gt 1000000000\b/u);
+  });
+});
+
+describe('bench-windows.yml: the bench job (windows-latest), one leg per cap', () => {
+  const text = wf('bench-windows.yml');
+  const bench = jobs(text)['bench']!;
+  const all = steps(bench);
+  const find = (needle: RegExp) => all.find((s) => needle.test(s));
+
+  it('needs the build job, runs on windows-latest for at most 90 minutes, and does not stop the other legs when one fails', () => {
+    expect(bench).toMatch(/\n {4}needs: build\n/u);
+    expect(bench).toMatch(/\n {4}runs-on: windows-latest\n/u);
+    expect(bench).toMatch(/\n {4}timeout-minutes: 90\n/u);
+    expect(bench).toMatch(/fail-fast: false/u);
+  });
+
+  it('the matrix is exactly none, 8GiB, 6GiB and 5GiB, written out, with no include or exclude', () => {
+    expect(bench).toMatch(/\n {6}matrix:\n {8}cap: \[none, 8GiB, 6GiB, 5GiB\]\n/u);
+    expect(bench).not.toMatch(/include:|exclude:/u);
+  });
+
+  it('matrix.cap appears only in the job name, one step env and the artefact name', () => {
+    const lines = text.split('\n').filter((l) => l.includes('matrix.cap'));
+    expect(lines.length).toBe(3);
+    const kinds = lines.map((l) =>
+      /^ {4}name: bench \(windows-latest, \$\{\{ matrix\.cap \}\}\)$/u.test(l)
+        ? 'job-name'
+        : /^ {10}CAP: \$\{\{ matrix\.cap \}\}$/u.test(l)
+          ? 'env'
+          : /^ {10}name: bench-windows-\$\{\{ matrix\.cap \}\}-\$\{\{ github\.sha \}\}$/u.test(l)
+            ? 'artefact'
+            : l,
+    );
+    expect(kinds.sort()).toEqual(['artefact', 'env', 'job-name']);
+  });
+
+  it('checks out without credentials, sets up Node 22 with no cache, installs with npm ci --ignore-scripts', () => {
+    expect(bench).toMatch(
+      /uses: actions\/checkout@[0-9a-f]{40} # v7\.0\.1\n\s+with:\n\s+persist-credentials: false/u,
+    );
+    expect(bench).toMatch(/node-version: 22\n/u);
+    expect(bench).toMatch(/run: npm ci --ignore-scripts\n/u);
+  });
+
+  it('downloads the dist of this run by name (no run-id, no token), and checks dist-SHA256SUMS on the runner before anything serves it', () => {
+    const dl = find(/actions\/download-artifact@/u)!;
+    expect(dl).toMatch(/name: dockit-dist-\$\{\{ github\.sha \}\}\n/u);
+    expect(text).not.toMatch(/run-id:|github-token:/u);
+    const check = find(/sha256sum[^\n]*--check|sha256sum -c/u)!;
+    expect(check).toBeDefined();
+    expect(check).toMatch(/shell: bash/u);
+    expect(check).toMatch(/--strict/u);
+    expect(check).toMatch(/sha256sum --binary --check/u);
+    expect(all.indexOf(check)).toBeGreaterThan(all.indexOf(dl));
+    expect(all.indexOf(check)).toBeLessThan(all.findIndex((s) => /run-capped\.ps1/u.test(s)));
+    // the count of files in dist equals the count of lines in the sums: no file outside the sums is served
+    expect(check).toMatch(/find dist -type f/u);
+  });
+
+  it('records the machine facts in bench-out/env.txt (memory, CPU, logical processors, page file, Chrome version, Defender) and never an environment variable', () => {
+    const env = find(/env\.txt/u)!;
+    expect(env).toMatch(/shell: pwsh/u);
+    for (const fact of [
+      'TotalPhysicalMemory',
+      'NumberOfLogicalProcessors',
+      'Win32_Processor',
+      'Win32_PageFileUsage',
+      'VersionInfo',
+      'RealTimeProtectionEnabled',
+    ])
+      expect(env, fact).toContain(fact);
+    expect(env).not.toMatch(
+      /\$env:|Get-ChildItem env|\bdir env:|printenv|GetEnvironmentVariable|\bset\b\s*$/imu,
+    );
+    expect(all.indexOf(env)).toBeLessThan(all.findIndex((s) => /run-capped\.ps1/u.test(s)));
+  });
+
+  it('runs run-capped.ps1 in pwsh with the cap in the step env only, then merges, then uploads', () => {
+    const run = find(/run-capped\.ps1/u)!;
+    expect(run).toMatch(/shell: pwsh\n/u);
+    expect(run).toMatch(/env:\n\s+CAP: \$\{\{ matrix\.cap \}\}\n/u);
+    // a block scalar: a plain scalar that starts with '&' is a YAML anchor, not the PowerShell call operator
+    expect(run).toMatch(
+      /run: \|\n\s+& \.\/scripts\/win\/run-capped\.ps1 -Cap \$env:CAP -OutDir bench-out\n/u,
+    );
+    expect(run).not.toMatch(/run: &/u);
+    const merge = find(/bench-emulated-merge\.mjs/u)!;
+    expect(merge).toMatch(/if: always\(\)/u);
+    expect(merge).toMatch(/--summary bench-out\/job-summary\.json/u);
+    const upload = find(/actions\/upload-artifact@/u)!;
+    expect(all.indexOf(merge)).toBeGreaterThan(all.indexOf(run));
+    expect(all.indexOf(upload)).toBeGreaterThan(all.indexOf(merge));
+  });
+
+  it('uploads the results with if: always(), seven-day retention, an error when nothing exists, no hidden files, named by cap and commit', () => {
+    const up = find(/actions\/upload-artifact@/u)!;
+    expect(up).toMatch(/^\s+if: always\(\)$/mu);
+    expect(up).toMatch(/name: bench-windows-\$\{\{ matrix\.cap \}\}-\$\{\{ github\.sha \}\}\n/u);
+    expect(up).toMatch(/path: bench-out\/\n/u);
+    expect(up).toMatch(/retention-days: 7\n/u);
+    expect(up).toMatch(/if-no-files-found: error\n/u);
+    expect(up).toMatch(/include-hidden-files: false\n/u);
+    // it is the last step: nothing runs after the upload that could be skipped
+    expect(all.at(-1)).toBe(up);
+  });
+
+  it('writes both CSVs, the log, env.txt, job-summary.json and job-membership.jsonl into bench-out (the files run-capped.ps1 writes)', () => {
+    const ps1 = readFileSync(join(__dirname, '..', 'scripts', 'win', 'run-capped.ps1'), 'utf8');
+    for (const f of [
+      'e2e-emulated-win-vm.csv',
+      'e2e-emulated-win-vm-questions.csv',
+      'bench.log',
+      'job-summary.json',
+      'job-membership.jsonl',
+    ])
+      expect(ps1, f).toContain(f);
+  });
+
+  it('no step reads a secret, an input or the event payload, and none installs anything but from the lockfile', () => {
+    expect(text).not.toMatch(/secrets\.|inputs\.|github\.event\.|GITHUB_TOKEN/u);
+    expect(text).not.toMatch(
+      /npm (install|i)\b|pip install|choco |winget |Invoke-WebRequest|curl /u,
+    );
   });
 });

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { apply, parseCsv, table } from '../scripts/bench-readme.mjs';
@@ -105,9 +105,33 @@ describe('laptop_8gb column (BUG-T1-S5-07)', () => {
     expect(withBaseline.filter((l) => /^\| (Before|After)/.test(l))).toHaveLength(2);
     for (const l of withBaseline.filter((l) => /^\| (Before|After)/.test(l)))
       expect(l).toContain(`| ${PHRASE} |`);
-    const broken = e2e.replace(new RegExp(`,${PHRASE}(\\n|$)`), ',\n');
+    // the phrase is followed by the two host-load columns in a CSV taken since BUG-T1-S6-05, and ends the line in an older one
+    const broken = e2e.replace(new RegExp(`,${PHRASE}(,|\\n|$)`), ',$1');
     expect(() => table(broken, q)).toThrow(/laptop_8gb/);
     const readme = readFileSync(join(root, 'README.md'), 'utf8');
     expect(apply(readme, table(e2e, q))).toBe(readme);
+  });
+
+  // B6 / TD-113: the emulated Windows results are separate files; when they are committed they obey the same rule and name what they are
+  it.each([
+    ['e2e-emulated-win-vm.csv', cols.E2E_EMULATED_COLUMNS],
+    ['e2e-emulated-win-vm-questions.csv', cols.Q_EMULATED_COLUMNS],
+  ])(
+    '%s, when it is committed, has its own header, an environment on every row and the 8 GB phrase on every row',
+    (f, columns) => {
+      const file = join(root, 'docs', 'benchmarks', f);
+      if (!existsSync(file)) return; // nothing to check until the first dispatch of bench-windows has been imported
+      const text = readFileSync(file, 'utf8');
+      expect(text.split('\n')[0]).toBe(columns.join(','));
+      for (const r of parseCsv(text) as Record<string, string>[]) {
+        expect(r['laptop_8gb']).toBe(PHRASE);
+        expect(() => cols.validateEnvironmentLabel(r['environment']!)).not.toThrow();
+      }
+    },
+  );
+
+  it('the laptop CSVs never carry an environment column (an emulated figure is never written into them)', () => {
+    for (const f of ['e2e.csv', 'e2e-questions.csv'])
+      expect(read(f).split('\n')[0]!.split(',')).not.toContain('environment');
   });
 });

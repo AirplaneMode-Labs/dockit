@@ -32,18 +32,35 @@ describe('dockit #sprint-status element (T1-S4-R1-05)', () => {
     }
   });
 
-  it("is a Sprint 6 line: Working and Not yet, the memory result with its target outcome, 8 GB not measured, live since the owner's push, and no claim that a done-when is met", () => {
-    expect(SPRINT_STATUS_LINE).toMatch(/^Sprint 6 \(19 Nov 2026\): Working: .* Not yet: .*\.$/);
-    expect(SPRINT_STATUS_LINE).toContain('short of the 5,120 MiB target');
+  it('is a Sprint 7 line: Working and Not yet, the re-measured memory result with its target outcome, 8 GB not measured, the Windows benchmark written and not run, and no claim that a done-when is met', () => {
+    expect(SPRINT_STATUS_LINE).toMatch(/^Sprint 7 \(20 Nov 2026\): Working: .* Not yet: .*\.$/);
+    expect(SPRINT_STATUS_LINE).toContain('nothing about the page changed in Sprint 7');
+    expect(SPRINT_STATUS_LINE).toContain(
+      're-measured on a quiet machine on the committed Sprint 6 build',
+    );
+    expect(SPRINT_STATUS_LINE).toContain('still short of the 5,120 MiB target');
     expect(SPRINT_STATUS_LINE).toContain('one model in memory at a time');
-    expect(SPRINT_STATUS_LINE).toContain('memory line');
-    expect(SPRINT_STATUS_LINE).toContain('before pdf.js opens it');
+    expect(SPRINT_STATUS_LINE).toContain('is written and has not run');
     expect(SPRINT_STATUS_LINE).toContain('not measured on 8 GB');
     expect(SPRINT_STATUS_LINE).toContain('OCR');
     expect(SPRINT_STATUS_LINE).toContain('WebLLM (cut)');
+    expect(SPRINT_STATUS_LINE).toContain('emulated');
     expect(SPRINT_STATUS_LINE).toContain("live since the owner's push of 18 Nov 2026");
     expect(SPRINT_STATUS_LINE).not.toMatch(/\bmet\b/);
-    expect(SPRINT_STATUS_LINE).not.toMatch(/compliance|cheaper|cost/i);
+    expect(SPRINT_STATUS_LINE).not.toMatch(/compliance|cheaper|cost|published|audited|compliant/i);
+    // the line never calls an emulated figure a laptop figure and every 8 GB mention is the negative
+    expect(SPRINT_STATUS_LINE).not.toMatch(/(?<!not )measured on 8 GB/);
+  });
+
+  it('the Sprint 7 not-yet box names the emulated Windows figure as pending its first run, with the other limits unchanged', () => {
+    const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8').replace(
+      /\s+/g,
+      ' ',
+    );
+    expect(app).toContain(
+      'An emulated Windows figure (a GitHub-hosted virtual machine, not a laptop) is pending the first run of the manual benchmark',
+    );
+    expect(app).toContain('A Windows or 8 GB laptop figure');
   });
 
   // Sprint 6 Part A (D5-01): the live page is live; no dockit text may still say the owner has not pushed.
