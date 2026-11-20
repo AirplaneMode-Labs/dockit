@@ -40,10 +40,12 @@ describe('README: the by-hand memory sampler (T3-S5-07)', () => {
     expect(line).toContain('WorkingSetSize');
   });
 
-  it('says it has never run on Windows (next to the line)', () => {
+  it('says it has run on a Windows Server virtual machine and never on a Windows laptop (next to the line)', () => {
     const i = readme.indexOf(line);
     const near = readme.slice(Math.max(0, i - 1500), i + 1500).replace(/\s+/g, ' ');
-    expect(near).toMatch(/has never run on Windows/iu);
+    expect(near).toContain('This sampler has run on a Windows Server virtual machine');
+    expect(near).toMatch(/never on a Windows laptop/iu);
+    expect(near).not.toMatch(/has never run on Windows/iu);
   });
 });
 
@@ -144,7 +146,7 @@ describe('CHANGELOG: earlier history is dated (T3-R1-05)', () => {
 });
 
 // Sprint 7 (B6, TD-101, TD-116, TD-120): the README names its live demo on the first screen, the commit its figures were measured on, the Windows benchmark
-// that has run once with its job commit limit unproven, and that dockit is never published to a registry.
+// (three runs on 20 Nov 2026; the third has its job commit limits proven in force), and that dockit is never published to a registry.
 describe('README, Sprint 7', () => {
   const csv = (f: string) =>
     readFileSync(new URL(`../docs/benchmarks/${f}`, import.meta.url), 'utf8')
@@ -170,38 +172,63 @@ describe('README, Sprint 7', () => {
     expect(flat).toMatch(/quiet host/u);
   });
 
-  it('describes the Windows benchmark under an emulated memory cap, records its one run (44656249868) and says the limit is unproven, and keeps every 8 GB cell and the done-when as they were', () => {
+  it('describes the Windows benchmark under an emulated memory cap, records its three runs and takes the third (44666921454) as the result, says what it shows and what it does not, and keeps every 8 GB cell and the done-when as they were', () => {
     const s = section('Benchmarks').replace(/\s+/g, ' ');
     expect(s).toContain('bench-windows');
     expect(s).toContain('Windows Job Object');
     expect(s).toContain('pwsh, node and Chrome process tree');
     expect(s).toMatch(/not a laptop/u);
-    expect(s).toContain('**The workflow has run once.**');
-    expect(s).toContain('run 44656249868');
+    expect(s).toContain(
+      '**The workflow has run three times on 20 Nov 2026, and the third run is the one whose rows are committed.**',
+    );
+    for (const id of ['44651054609', '44656249868', '44666921454'])
+      expect(s).toContain(`run ${id}`);
     expect(s).toContain('5705baab8cdf');
-    expect(s).toMatch(/limit was never read back/u);
-    expect(s).toMatch(/limit unproven/u);
-    expect(s).not.toMatch(/has not run|written and has not|pending its first run/u);
-    // the change that settles the limit: read-back, probe, control leg; written, and no Windows run has tested it
-    expect(s).toContain('no Windows run has tested it yet');
-    expect(s).toContain('reads the limit back from the system');
-    expect(s).toContain('a 2 GiB control, is green only when the benchmark fails to complete');
-    expect(s).toContain('limit proven in force (probe refused, read-back equal)');
+    expect(s).toContain('f6a71cab4ab1');
+    expect(s).toContain('docs/benchmarks/history/');
+    expect(s).toContain('docs/benchmarks/emulated-win-vm-run-44666921454/');
+    // what the third run shows, in the words the rows give
+    expect(s).toContain('**What run 44666921454 shows.**');
+    expect(s).toContain('the limit is **proven in force** on each of those legs');
+    expect(s).toContain('ERROR_COMMITMENT_LIMIT');
+    expect(s).toContain('a whole-tree peak above a limit does not mean the limit was exceeded');
+    expect(s).toContain(
+      "the job's completion port received two memory-limit messages while the benchmark ran (besides the probe's one), so commits were refused during the benchmark, and the leg still finished all six runs with the same 24 of 36 answers",
+    );
+    expect(s).toContain('so no commit was refused during the benchmark');
+    expect(s).toContain(
+      'did not complete in its 12 minutes and its limit is proven in force, so it passed as a control',
+    );
+    // what it does not show
+    expect(s).toContain('**What it does not show.**');
+    expect(s).toContain('it does not limit physical RAM');
+    expect(s).toContain(
+      "it does not model an 8 GB machine's operating system and other apps, its integrated GPU, its thermal limits or its disk",
+    );
+    expect(s).toContain("**Sprint 5's 8 GB done-when stays NOT met**");
+    expect(s).toContain('the tightest cap ran fastest');
     expect(s).toMatch(/commit limit is not a physical-memory limit/u);
     expect(s).toContain('scripts/win/README.md');
     expect(s).toMatch(/2 vCPU, 8 GB[^.]*not built/u);
+    expect(s).toContain('limit proven in force (probe refused, read-back equal)');
+    // none of the first run's caveats survives as a present-tense claim
+    expect(s).not.toMatch(
+      /limit unproven|has not run|written and has not|pending its first run|no Windows run has tested it|workflow has run once/u,
+    );
     expect(flat).toContain('8 GB Windows done-when NOT met (owner runbook step 5)');
   });
 
-  it('docs/release.md says the Windows run happened once, that it is emulated, and that its limit is unproven', () => {
+  it('docs/release.md says the Windows workflow has run three times, that the third is the result, that it is emulated, and that its limit is proven in force', () => {
     const rel = readFileSync(new URL('../docs/release.md', import.meta.url), 'utf8').replace(
       /\s+/g,
       ' ',
     );
-    expect(rel).toMatch(/`bench-windows` workflow ran once \(run 44656249868/u);
-    expect(rel).toMatch(/emulated \(a GitHub-hosted VM, not a laptop\)/u);
-    expect(rel).toMatch(/limit is unproven/u);
-    expect(rel).not.toMatch(/written and has not run/u);
+    expect(rel).toMatch(/`bench-windows` workflow has run three times \(20 Nov 2026\)/u);
+    expect(rel).toContain('run 44666921454, is the result');
+    expect(rel).toMatch(/emulated \(a GitHub-hosted VM with 4 vCPU and 16 GB RAM, not a laptop\)/u);
+    expect(rel).toContain('job commit limits are proven in force');
+    expect(rel).toContain('The 8 GB Windows done-when stays NOT met');
+    expect(rel).not.toMatch(/limit is unproven|written and not yet run|ran once/u);
   });
 
   it('says dockit is never published to a registry and that the Pages deploy is the release (TD-120), and docs/release.md says it in one sentence', () => {
@@ -212,12 +239,16 @@ describe('README, Sprint 7', () => {
     expect(rel).toMatch(/not measured on 8 GB/u);
   });
 
-  it("the Limitations section says there is no Windows laptop figure and the one emulated run has an unproven limit, and that the local Playwright launch has Chrome's sandbox off", () => {
+  it("the Limitations section says there is no Windows laptop figure, that the emulated run's limits are proven in force and still do not model an 8 GB laptop, and that the local Playwright launch has Chrome's sandbox off", () => {
     const lim = section('Limitations').replace(/\s+/g, ' ');
     expect(lim).toMatch(/No Windows laptop figure exists/u);
-    expect(lim).toMatch(/emulated Windows run[^.]*ran once/u);
-    expect(lim).toMatch(/limit was in effect is unproven/u);
-    expect(lim).not.toMatch(/has not run|nothing has run on Windows/u);
+    expect(lim).toMatch(/emulated Windows run[^.]*ran on 20 Nov 2026/u);
+    expect(lim).toContain('Its 8, 6 and 5 GiB job commit limits are proven in force');
+    expect(lim).toContain('the 5 GiB leg finished although commits were refused while it ran');
+    expect(lim).toContain(
+      "does not model an 8 GB laptop's operating system and other apps, integrated graphics, thermal limits or disk, so it is not an 8 GB result and Sprint 5's 8 GB done-when stays NOT met",
+    );
+    expect(lim).not.toMatch(/has not run|nothing has run on Windows|is unproven|ran once/u);
     expect(lim).toMatch(/Playwright[^.]*sandbox/u);
   });
 });

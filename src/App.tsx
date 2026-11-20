@@ -248,9 +248,11 @@ export function App({
               48 GB, and every one says not measured on 8 GB.
             </li>
             <li>
-              An emulated Windows figure (a GitHub-hosted virtual machine, not a laptop) is pending
-              the first run of the manual benchmark, which is written and has not run. It will say
-              what it is on every row, and it will not fill an 8 GB laptop cell.
+              The emulated Windows figures (one run of the manual benchmark on a GitHub-hosted
+              virtual machine with 4 vCPU and 16 GB RAM, not a laptop) limit committed memory only:
+              they do not model an 8 GB machine's operating system and other apps, integrated
+              graphics, heat or disk. They say what they are on every row and fill no 8 GB laptop
+              cell.
             </li>
             <li>
               No Hindi or other Indic answer quality claim: the glyph gate is tested on Devanagari

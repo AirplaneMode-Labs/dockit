@@ -58,7 +58,11 @@ describe('memory figures are derived from the committed CSVs with one rounding r
   });
 
   it('the status line equals the generated line, with the same medians and the 5-run definition', () => {
-    const line = statusLine(csv.b, csv.bq, csv.a, csv.aq);
+    const emulated = readFileSync(
+      new URL('../docs/benchmarks/e2e-emulated-win-vm.csv', import.meta.url),
+      'utf8',
+    );
+    const line = statusLine(csv.b, csv.bq, csv.a, csv.aq, emulated);
     expect(SPRINT_STATUS_LINE).toBe(line);
     const w = memoryWords(memoryFigures(csv.b, csv.bq, csv.a, csv.aq));
     expect(line).toContain(`a median of ${w.afterMedian}, down from ${w.beforeMedian}`);

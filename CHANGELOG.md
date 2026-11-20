@@ -7,9 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Added (the third dispatch, run 44666921454 on `f6a71ca`: the limit proven in force)
 
-- The first Windows results, emulated and not a laptop: `docs/benchmarks/e2e-emulated-win-vm.csv` (24 rows) and `e2e-emulated-win-vm-questions.csv` (168 rows) from the second dispatch of the manual
+- `docs/benchmarks/e2e-emulated-win-vm.csv` (25 rows) and `e2e-emulated-win-vm-questions.csv` (168 rows) are now the third dispatch's: the first with the limit read back, probed and counted on a completion port; the four benchmark legs (no limit, 8, 6 and 5 GiB; six runs each, none left
+  out) and one marker row for the 2 GiB control leg. Emulated, not a laptop (a GitHub-hosted Windows Server 2025 VM, 4 vCPU, 16 GB RAM, a job-wide commit limit on the pwsh, node and Chrome tree); every `laptop_8gb` cell still reads `not measured on 8 GB` and the 8 GB Windows done-when stays NOT met.
+  The second dispatch's rows are kept byte for byte in `docs/benchmarks/history/` and are in no figure: the two runs measure the same configuration with the same benchmark code, the second run's capped rows are by their own evidence not results under a cap, the label the readers group rows by is identical across runs
+  (so appending would pool twelve rows into each leg's median unless both readers learned a run key), and nothing is lost (a test pins the history files). Every leg's `job-summary.json` and `env.txt` are in `docs/benchmarks/emulated-win-vm-run-44666921454/`, as the run wrote them (line endings aside; excluded from Prettier).
+- **What the run shows.** On the 8, 6, 5 and 2 GiB legs the system read back the limit that was set (`0x2200` and the same `JobMemoryLimit`, after the job was created, after the process was put in it and at the end) and a commit of the limit plus 256 MiB from inside the job was refused (`ERROR_COMMITMENT_LIMIT`)
+  while a 64 MiB commit worked: the limit is proven in force. The refused commit is counted in `PeakJobMemoryUsed` (after the probe it read the limit plus 256 MiB plus 87 to 107 MB the job held), so a whole-tree peak above a limit does not mean the limit was exceeded: explanation 2 of the second dispatch is the one, and its 5 GiB anomaly is settled. On the 5 GiB leg the
+  completion port received 2 memory-limit messages while the benchmark ran (3 in all, 1 the probe's); the leg still finished all six runs with the same 24 of 36 answers as the leg with no limit and the Mac. On the 8 and 6 GiB legs the only message was the probe's. The 2 GiB control did not complete (stopped at its 12-minute limit after "cache phase done", no row, no crash) and passed as a control. No claim about speed:
+  the first-token medians follow each leg's processor (EPYC 9V45 7.2 s, 9V74 9.9 s, 7763 11.5 s, Xeon 8370C 12.4 s), not the cap. It does not limit physical RAM and does not model an 8 GB machine's operating system and other apps, integrated GPU, thermal limits or disk.
+- A seventh evidence column, `probe_memory_limit_messages` (the completion port's count when the probe ended), and `limitMessages()` in `scripts/lib/bench-columns.mjs`: the messages posted while the benchmark ran are the whole-run count minus the probe's own. The merge step fills it from `probe.jobMemoryLimitMessagesAfterProbe`, accepts the header a dispatch of `f6a71ca` wrote
+  (`E2E_EMULATED_COLUMNS_V2`) and upgrades it; the writer refuses a probe count above the whole-run count. (A message is the system's notice that a process asked for a commit past the limit; delivery is not guaranteed, so the count is a floor.)
+- A control leg that wrote no row (stopped by its time limit before its first run finished: `bench-e2e` writes nothing then) gets one marker row from the merge step (`controlMarkerCsv()`; run 0, every figure empty, no failure reason, the summary's own label, the commit from `--commit` or `GITHUB_SHA`), the documented zero-row rule extended to a leg that was stopped and not failed.
+  Without it the control leg would be in no committed file. A summary with no label the writer accepts keeps the old behaviour (one line, exit 0).
+- The README block and the site say it in words computed from the rows: a "Commits refused while the benchmark ran" column and an evidence table that splits the memory-limit messages into the whole run, the probe's and the benchmark's; a paragraph for a proven leg that had refusals (and still finished, with its question set) and one for the proven legs that had none; a "Question set" column per leg;
+  and a control leg that has only its marker row reads "did not complete ... so the control passed" when its limit is proven. `scripts/status-line.mjs` computes the Windows clause of the status line from the same rows (`windowsClause()`).
+- `test/bench-emulated-run2.test.ts`: the probe column and the three headers, `limitMessages()`, the merge step, the marker row (as a function and as a workflow step), the wording of the README block, and the committed import re-derived from the committed summaries.
+
+### Added (the second dispatch, run 44656249868)
+
+- The first Windows results, emulated and not a laptop (the second dispatch; since the third dispatch they are kept unchanged as `docs/benchmarks/history/e2e-emulated-win-vm-run-44656249868.csv` and `...-questions.csv`, and the live files are the third run's, below): 24 rows and 168 rows from the second dispatch of the manual
   `bench-windows` workflow (run 44656249868 on `5705baa`, 20 Nov 2026), all four legs (no limit, 8, 6 and 5 GiB), six runs each, none left out. They were assembled with the repository's own
   `merge()` (a no-op on every leg: the job columns already equalled each `job-summary.json`) and its CSV writer, which refuses a row without `not measured on 8 GB` or with a label that reads as a laptop;
   every `laptop_8gb` cell still reads `not measured on 8 GB` and the 8 GB Windows done-when stays NOT met. The README subsection "Emulated Windows (not a laptop)" is generated from them.
@@ -22,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The README subsection and its tests now say in words, computed from the rows and never typed, when a leg's whole-tree peak is above its own limit ("not a result under this cap", also in its Result cell),
   when no leg failed (so no capped leg shows its limit taking effect), and that each leg ran on its own VM; the table shows the Chrome build beside the commit.
 
-### Added (the limit evidence and the control leg, after run 44656249868; written and tested with kernel32 stubbed, not yet run on Windows)
+### Added (the limit evidence and the control leg, after run 44656249868; written and tested with kernel32 stubbed, then run on Windows in run 44666921454)
 
 - `scripts/win/run-capped.ps1` reads the limit back from the system (`QueryInformationJobObject`, class 9) after it creates the job and again after it puts itself in it, logs both, records them in
   `job-summary.json` (now version 2) and ends the leg with exit code 6, a recorded reason and before any benchmark when `LimitFlags` or `JobMemoryLimit` differ from what it set; the leg with no limit
@@ -47,12 +65,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- README (Benchmarks and Limitations) and `docs/release.md`: the Windows workflow has run once; "has not run" is gone, replaced by the run and its caveat. The dated Sprint 7 Status paragraph, the status line
-  and the "does not do yet" box still say the emulated run is pending: they are the Sprint 7 snapshot, pinned in both repositories, and are refreshed with the demos.
+- README (Benchmarks, Limitations and Status), `docs/release.md`, the status line, the "does not do yet" box of the page and `scripts/win/README.md`: "has not run", "pending its first run" and "limit unproven" are gone, replaced by what the third dispatch showed and did not show (the earlier two dispatches are recorded, not hidden). The Status paragraph and the status line are generated, and the Windows clause comes from the committed rows.
+  The not-yet box says the emulated figures limit committed memory only and do not model an 8 GB machine's other apps, graphics, heat or disk.
 - `scripts/win/README.md` records the run and answers the eight open questions; the header comment of `scripts/win/run-capped.ps1` no longer says it has never run (a comment, no code).
 
 ### Fixed
 
+- The two `(D5-04)` task IDs that the previous CHANGELOG edit dropped are back: on the Sprint 6 `wasmMemoryPeak` entry (D5-04 was the Sprint 6 bench-readme and wasm-peak task: red logs `D5-04-bench-readme.log` and `D5-04-wasm-peak.log`) and on the Sprint 5 `scripts/assemble-deps.mjs` entry (D5-04 was the Sprint 5 assemble-deps task: red log `D5-04.log` runs `test/assemble-deps.test.ts`). Both IDs were right.
 - The first dispatch of the manual Windows benchmark (`bench-windows`, run 44651054609 on `f886506`) failed on all four legs, at its first Windows step: the check of `dist-SHA256SUMS` ran
   `sha256sum --binary --check`, and GNU `sha256sum` (the one in Git for Windows' bash, and in ubuntu) refuses `--binary` and `--text` together with `--check`
   ("meaningless when verifying checksums"). The macOS `sha256sum` accepts them, so the workflow's own test pinned the string. The check is now `sha256sum --check --strict --quiet` (each line's
@@ -139,7 +158,7 @@ Sprint 6, build work started early on 19 Nov 2026 (version 0.3.0-dev, TD-69; pri
 - `docs/benchmarks/e2e-s6-baseline.csv` and `e2e-questions-s6-baseline.csv` (the pair taken before the measures, TD-77), a before and after table in the README built from both pairs by
   `scripts/bench-readme.mjs`, and `B1-result.md`'s outcome in the README: the median peak went from 6,307 MiB to 5,441 MiB; the 5,120 MiB target was **missed**; the question set stayed at 24 of 36
   and 4 of 6; the median per-question total rose from 9,391 ms to 11,950 ms (guard 12,500 ms). (D5-02, D5-04)
-- `wasmMemoryPeak` in the benchmark harness is the most WebAssembly memory the workers held at once; with one model at a time a sum over every load would count loads that never coexisted.
+- `wasmMemoryPeak` in the benchmark harness is the most WebAssembly memory the workers held at once; with one model at a time a sum over every load would count loads that never coexisted. (D5-04)
 - Re-vendored spec release 0.6.0 (manifest 0.1.3 with `weak_key_refused`, capability profile 0.1.1, event 0.1.5, storage API 0.4.0, backend adapter 0.5.0). The stub trust root (an all-zero key)
   is a small-order point that a 0.1.3 verifier refuses; the stub keeps it, and a test proves with independent Ed25519 arithmetic that it is weak and that the stub runtime can never verify anything. (D5-07)
 
@@ -187,7 +206,7 @@ Sprint 5 and the earlier sprints (pushed on 18 Nov 2026), as they were written.
 - Capability card wired to the runtime profile (`detectCapabilities()`, the 8 GB note and the verdict against the model's minimum). (D5-06)
 - `scripts/assemble-deps.mjs` and `deps.lock.json` (TD-40): the four sibling builds from pinned commits, `vendor/PROVENANCE.json`, a stub mode for CI
   (`DOCKIT_DEPS=stub`, `npm run build:check`), and a `pages.yml` that checks the siblings out at the locked commits, builds the signed model bundle and refuses
-  a `dist/` over 1 GB (1,000,000,000 bytes). `npm ci --ignore-scripts` everywhere; per-job permissions; no secrets.
+  a `dist/` over 1 GB (1,000,000,000 bytes). `npm ci --ignore-scripts` everywhere; per-job permissions; no secrets. (D5-04)
 - The model bundle (about 754 MiB) is verified against a manifest signed by an ephemeral in-memory key whose public half is compiled in
   (`dev.airplanemode.dockit-models`, pinned with `expectManifestId`, every entry under `models/`); the verified manifest is stored (IndexedDB) and
   re-verified on every load, so the offline restart works. (D5-06)
