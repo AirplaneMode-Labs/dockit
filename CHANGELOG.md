@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (an index of the raw benchmark files, owner decision of 20 Nov 2026)
+
+- `docs/benchmarks/README.md` indexes every file and folder under `docs/benchmarks/`: what it is, its date, commit, machine or environment label, method, the command that reproduces it (`npm run bench:e2e` for the Mac files, the `bench-windows` dispatch for the emulated Windows files), and which
+  are historical (the second dispatch under `history/`, and the Sprint 6 before pair as the historical baseline). It carries the standing lines (every Mac figure is one Apple M5 Pro with 48 GB; the Windows files are emulated on a GitHub-hosted VM under a job commit limit and are not a laptop;
+  nothing is measured on an 8 GB laptop) and a table of the figures quoted in this repository that have no committed raw row. The README Benchmarks section and the demo footer link to it. `test/benchmarks-index.test.ts` fails when a file or folder there is missing from the index, when the index
+  names one that does not exist, when a date, commit, machine or row count it states is not the CSV's, when a leg's runner or limit is not its `env.txt` and `job-summary.json`'s, or when a listed figure is no longer quoted where the index says or has lost its mark.
+- Figures that have no committed raw row are marked "raw data not kept" where they are quoted (the two model loads of a question, about 2.3 seconds in all; the hostile-PDF peaks; the second dispatch's per-leg processors, membership samples and process ids; the third dispatch's per-tick timeline), or point at the row or
+  commit that holds them (the 2,241 MiB of WebAssembly memory is a column of `e2e.csv`; Sprint 6's own run, 5,441 MiB and 11,950 ms, is in git history at `d2293d7`). The "about 1.8 s" reload that runtime attributes to dockit is not quoted by dockit and has no row here either.
+
 ### Added (the third dispatch, run 44666921454 on `f6a71ca`: the limit proven in force)
 
 - `docs/benchmarks/e2e-emulated-win-vm.csv` (25 rows) and `e2e-emulated-win-vm-questions.csv` (168 rows) are now the third dispatch's: the first with the limit read back, probed and counted on a completion port; the four benchmark legs (no limit, 8, 6 and 5 GiB; six runs each, none left
@@ -14,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The second dispatch's rows are kept byte for byte in `docs/benchmarks/history/` and are in no figure: the two runs measure the same configuration with the same benchmark code, the second run's capped rows are by their own evidence not results under a cap, the label the readers group rows by is identical across runs
   (so appending would pool twelve rows into each leg's median unless both readers learned a run key), and nothing is lost (a test pins the history files). Every leg's `job-summary.json` and `env.txt` are in `docs/benchmarks/emulated-win-vm-run-44666921454/`, as the run wrote them (line endings aside; excluded from Prettier).
 - **What the run shows.** On the 8, 6, 5 and 2 GiB legs the system read back the limit that was set (`0x2200` and the same `JobMemoryLimit`, after the job was created, after the process was put in it and at the end) and a commit of the limit plus 256 MiB from inside the job was refused (`ERROR_COMMITMENT_LIMIT`)
-  while a 64 MiB commit worked: the limit is proven in force. The refused commit is counted in `PeakJobMemoryUsed` (after the probe it read the limit plus 256 MiB plus 87 to 107 MB the job held), so a whole-tree peak above a limit does not mean the limit was exceeded: explanation 2 of the second dispatch is the one, and its 5 GiB anomaly is settled. On the 5 GiB leg the
+  while a 64 MiB commit worked: the limit is proven in force. The refused commit is counted in `PeakJobMemoryUsed` (after the probe it read the limit plus 256 MiB plus 92 to 107 MB the job held, from the `job_peak_after_probe_bytes` column), so a whole-tree peak above a limit does not mean the limit was exceeded: explanation 2 of the second dispatch is the one, and its 5 GiB anomaly is settled. On the 5 GiB leg the
   completion port received 2 memory-limit messages while the benchmark ran (3 in all, 1 the probe's); the leg still finished all six runs with the same 24 of 36 answers as the leg with no limit and the Mac. On the 8 and 6 GiB legs the only message was the probe's. The 2 GiB control did not complete (stopped at its 12-minute limit after "cache phase done", no row, no crash) and passed as a control. No claim about speed:
   the first-token medians follow each leg's processor (EPYC 9V45 7.2 s, 9V74 9.9 s, 7763 11.5 s, Xeon 8370C 12.4 s), not the cap. It does not limit physical RAM and does not model an 8 GB machine's operating system and other apps, integrated GPU, thermal limits or disk.
 - A seventh evidence column, `probe_memory_limit_messages` (the completion port's count when the probe ended), and `limitMessages()` in `scripts/lib/bench-columns.mjs`: the messages posted while the benchmark ran are the whole-run count minus the probe's own. The merge step fills it from `probe.jobMemoryLimitMessagesAfterProbe`, accepts the header a dispatch of `f6a71ca` wrote
@@ -71,6 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The memory the job itself held at the moment of the refused commit probe is 92 to 107 MB (91,582,464 to 106,831,872 bytes, from `job_peak_after_probe_bytes` minus the limit minus 256 MiB), not "87 to 107 MB" as the CHANGELOG and `scripts/win/README.md` said (87 was the low end in MiB).
 - The two `(D5-04)` task IDs that the previous CHANGELOG edit dropped are back: on the Sprint 6 `wasmMemoryPeak` entry (D5-04 was the Sprint 6 bench-readme and wasm-peak task: red logs `D5-04-bench-readme.log` and `D5-04-wasm-peak.log`) and on the Sprint 5 `scripts/assemble-deps.mjs` entry (D5-04 was the Sprint 5 assemble-deps task: red log `D5-04.log` runs `test/assemble-deps.test.ts`). Both IDs were right.
 - The first dispatch of the manual Windows benchmark (`bench-windows`, run 44651054609 on `f886506`) failed on all four legs, at its first Windows step: the check of `dist-SHA256SUMS` ran
   `sha256sum --binary --check`, and GNU `sha256sum` (the one in Git for Windows' bash, and in ubuntu) refuses `--binary` and `--text` together with `--check`
@@ -112,7 +122,7 @@ Apple M5 Pro 48 GB and is not measured on 8 GB. Nothing about what the page does
 ### Changed
 
 - `docs/benchmarks/e2e.csv` and `e2e-questions.csv` are the Sprint 6 build re-measured on a quiet machine (TD-101): dockit commit `4e6654f9e4ed`, built from fresh clones at the locked sibling commits, no `-dirty`. The median
-  Chrome process-tree peak is 5,436 MiB (Sprint 6's committed run: 5,441 MiB); the 5,120 MiB target is still **missed**; the question set is 24 of 36; the median per-question total is 11,304 ms. (D5-00)
+  Chrome process-tree peak is 5,436 MiB (Sprint 6's committed run: 5,441 MiB, in git history only, `d2293d7`); the 5,120 MiB target is still **missed**; the question set is 24 of 36; the median per-question total is 11,304 ms. (D5-00)
 - Re-vendored spec release 0.6.1 (manifest 0.1.4, event 0.1.6, storage API 0.4.1; the other three contracts unchanged) from the digests of `LANDED.json`; `sync-contracts` reads them when `SPEC-LANDED.txt` is prose, and a
   header that names an older contract version is drift. (D5-07)
 - The Sprint 7 status line and the "does not do yet" box: the emulated Windows figure is pending its first run. (D5-06)
@@ -157,7 +167,7 @@ Sprint 6, build work started early on 19 Nov 2026 (version 0.3.0-dev, TD-69; pri
   extract stage refuses (`corrupt`) on a mismatch; the file is read once. The analysis worker and the pdf worker are ended as soon as their stage ends. (D5-03)
 - `docs/benchmarks/e2e-s6-baseline.csv` and `e2e-questions-s6-baseline.csv` (the pair taken before the measures, TD-77), a before and after table in the README built from both pairs by
   `scripts/bench-readme.mjs`, and `B1-result.md`'s outcome in the README: the median peak went from 6,307 MiB to 5,441 MiB; the 5,120 MiB target was **missed**; the question set stayed at 24 of 36
-  and 4 of 6; the median per-question total rose from 9,391 ms to 11,950 ms (guard 12,500 ms). (D5-02, D5-04)
+  and 4 of 6; the median per-question total rose from 9,391 ms to 11,950 ms (guard 12,500 ms); the 5,441 MiB and the 11,950 ms are of the run that `d2293d7` committed, in git history only, since the Sprint 7 re-measure replaced the files. (D5-02, D5-04)
 - `wasmMemoryPeak` in the benchmark harness is the most WebAssembly memory the workers held at once; with one model at a time a sum over every load would count loads that never coexisted. (D5-04)
 - Re-vendored spec release 0.6.0 (manifest 0.1.3 with `weak_key_refused`, capability profile 0.1.1, event 0.1.5, storage API 0.4.0, backend adapter 0.5.0). The stub trust root (an all-zero key)
   is a small-order point that a 0.1.3 verifier refuses; the stub keeps it, and a test proves with independent Ed25519 arithmetic that it is weak and that the stub runtime can never verify anything. (D5-07)
@@ -185,7 +195,7 @@ Sprint 6, build work started early on 19 Nov 2026 (version 0.3.0-dev, TD-69; pri
 
 ### Security
 
-- S1-107 is closed for the font and image cases and the structure cases above (a font bomb peaked at 3,056 MiB against 8,121 MiB in Sprint 5). pdf.js's own inline-image and Type 3 decoding stay
+- S1-107 is closed for the font and image cases and the structure cases above (a font bomb peaked at 3,056 MiB against 8,121 MiB in Sprint 5; raw data not kept, see `docs/benchmarks/README.md`). pdf.js's own inline-image and Type 3 decoding stay
   documented residuals. (D5-06)
 - The memory line is a usability guard, not a security control; it can be overridden by a user. (D5-03)
 

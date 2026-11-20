@@ -77,7 +77,7 @@ Kept as it was written after that run, with its conclusion. Its rows are unchang
 The first dispatch (run 44651054609) stopped on all four legs at the check of `dist-SHA256SUMS`, before this script was reached (fixed; see the CHANGELOG). The
 second dispatch (run 44656249868, dockit `5705baa`, started 01:49 UTC) was green on all four legs. Its rows are in `docs/benchmarks/e2e-emulated-win-vm.csv` and
 `e2e-emulated-win-vm-questions.csv` (24 and 168 rows, none left out), imported with the repository's own merge step and writers; the raw artefacts expire after seven
-days. Every leg had its own runner VM. The machine facts, from each leg's `env.txt`:
+days. Every leg had its own runner VM. The machine facts, from each leg's `env.txt` (raw data not kept: these `env.txt` files expired with the artefacts after seven days and were not committed, so the processor and the page-file drive below have no row; the Chrome builds, the whole-tree peaks and every timing in this section are rows of `docs/benchmarks/history/e2e-emulated-win-vm-run-44656249868.csv`):
 
 | Leg  | CPU                   | Chrome        | Page file     | Whole-tree peak (`PeakJobMemoryUsed`) | Limit           |
 | ---- | --------------------- | ------------- | ------------- | ------------------------------------- | --------------- |
@@ -106,7 +106,7 @@ rounded half up):
   succeeded under the runner's own job (nesting is allowed, so no `assignError`), no leg timed out, and every leg exited 0.
 - **The whole tree was in the job.** 1,748 membership samples over the four legs: every `chrome.exe` that carried the benchmark profile was in the job in every
   sample, `job_escapes` is 0, no process could not be asked, and the job listed 11 process ids at steady state (pwsh, node, the Windows PowerShell sampler and eight Chrome
-  processes).
+  processes). Raw data not kept for these counts: that run's `job-membership.jsonl` and `job-summary.json` expired with its artefacts and were not committed; `job_escapes` 0 is a column of every row of `docs/benchmarks/history/e2e-emulated-win-vm-run-44656249868.csv`.
 - Chrome started and ran inside the job on all four legs, launched the way the harness launches an emulated run (`chromiumSandbox: true`; the log does not print the launch flags, so the sandbox is the
   code's word, not the run's). No request left the page after the model was cached (`requests_after_offline` 0 on all 24 runs),
   no failure reason was recorded on any row, `bench.err.log` is empty, and the worker WebAssembly peak is the same 2,349,596,672 bytes on every row of every leg.
@@ -241,10 +241,10 @@ still equal at the end of each run. Explanation 1 of the second dispatch (the li
 
 ### The peak counts refused commits: explanation 2 is the one
 
-`PeakJobMemoryUsed` after the refused probe is **above the limit** on every capped leg, by the probe's 256 MiB plus 87 to 107 MB that the job itself held at that moment (before the probe the peak was 87 to 89 MB): 8GiB 106,831,872 B, 6GiB 100,233,216 B, 5GiB 98,344,960 B,
+`PeakJobMemoryUsed` after the refused probe is **above the limit** on every capped leg, by the probe's 256 MiB plus 92 to 107 MB that the job itself held at that moment (before the probe the peak was 87 to 89 MB): 8GiB 106,831,872 B, 6GiB 100,233,216 B, 5GiB 98,344,960 B,
 2GiB 91,582,464 B. A commit that the limit refused is counted in the high-water mark as the current commit plus the size that was asked for, so **a whole-tree peak above a limit does not mean the limit was exceeded**. That is what the second dispatch's 5 GiB leg
 showed (6,074,314,752 B against a limit of 5,368,709,120 B), and it explains the third dispatch's own 5 GiB peak (6,092,845,056 B, 5,811 MiB) too: its membership log shows the peak and the memory-limit count moving together after the probe, from 5,735,489,536 B (the probe's, count 1) to
-5,859,475,456 B when the count became 2 (the sample at 03:23:23Z, 27 seconds in) and to 6,092,845,056 B when it became 3 (03:32:21Z). On the 6 and 8 GiB legs neither the peak nor the count moved at any of their 512 and 574 samples after the probe. The leg with no limit, where nothing can be refused, reads a real
+5,859,475,456 B when the count became 2 (the sample at 03:23:23Z, 27 seconds in) and to 6,092,845,056 B when it became 3 (03:32:21Z) (raw data not kept for the timeline: the per-tick `job-membership.jsonl` of that leg was not imported, and `5GiB/job-summary.json` holds the first and last sample, the tick count and the message count only). On the 6 and 8 GiB legs neither the peak nor the count moved at any of their 512 and 574 samples after the probe. The leg with no limit, where nothing can be refused, reads a real
 whole-tree peak of 6,081,593,344 B (5,800 MiB), within 11 MB of the 5 GiB leg's: consistent with the same demand, of which the 5 GiB limit refused the part above it (the legs ran on different VMs, so this is consistent, not a measurement of the refused amount). The first
 memory-limit message of every capped leg carries the process id that is first in the job's list, which is pwsh itself: it is the probe's.
 
@@ -261,14 +261,14 @@ answers as the leg with no limit and the Mac, and no request after the model was
 ### The 2 GiB control passed
 
 The benchmark must not complete under a limit below what it needs (the lowest Chrome-only commit peak of any benchmark run is 3,708 MiB, against a limit of 2,048 MiB). It did not: the script stopped it at its 12-minute limit (`benchExitCode` 124, `timedOut` true, `control.outcome` `timed_out`),
-having written no row (`benchProgress.rowsWritten` 0, the last line of the log "cache phase done": the model was cached, and no run finished), with no failure reason (fail-fast saw no crash) and 2 memory-limit messages, the probe's at the start and one 45 seconds later, and nothing for the 11 minutes after that.
+having written no row (`benchProgress.rowsWritten` 0, the last line of the log "cache phase done": the model was cached, and no run finished), with no failure reason (fail-fast saw no crash) and 2 memory-limit messages, the probe's at the start and one 45 seconds later, and nothing for the 11 minutes after that (raw data not kept for the timing: the control's `job-membership.jsonl` was not imported; `2GiB/job-summary.json` holds the count, 2).
 Its limit is proven in force, so `control.verdict` is `control_passed` and the leg is green (exit 0). **What it shows:** a limit that is in force stops this benchmark from completing. **What it does not show:** how it stopped. Nothing crashed that fail-fast could name, so the benchmark hung or crawled after a refused commit rather than failing at once, and the log does not say where.
 The control wrote no CSV, so the committed runs file holds one marker row for it (`control_leg` true, run 0, no figure, no failure reason), and the README block and the site report it as a control: in no table row, no median, no peak.
 
 ### No claim about speed under a cap
 
 Each leg ran on its own VM with its own processor, and the first-token medians follow the processor, not the cap: 7.2 s on the EPYC 9V45 (the 5 GiB leg, the tightest cap), 9.9 s on the 9V74 (no limit), 11.5 s on the 7763 (6 GiB), 12.4 s on the Xeon 8370C (8 GiB). The second dispatch ran the same four caps on
-different VMs and ordered them differently (its 5 GiB leg was the slowest, this one's the fastest), and **the same three EPYC processors gave the same medians in both dispatches under other caps**: the 9V45 7,111 ms there (its 8 GiB leg) and 7,216 ms here (5 GiB), the 9V74 9,856 ms (6 GiB) and 9,920 ms (no limit), the 7763 11,511 ms (5 GiB) and 11,516 ms (6 GiB). So the time follows the processor, and with one run per leg and a different VM each time no difference in time between two legs is an effect of the cap; the README and the site say so beside the figures.
+different VMs and ordered them differently (its 5 GiB leg was the slowest, this one's the fastest), and **the same three EPYC processors gave the same medians in both dispatches under other caps**: the 9V45 7,111 ms there (its 8 GiB leg) and 7,216 ms here (5 GiB), the 9V74 9,856 ms (6 GiB) and 9,920 ms (no limit), the 7763 11,511 ms (5 GiB) and 11,516 ms (6 GiB) (the medians are rows of the two CSVs; which processor each leg of the second dispatch ran on is raw data not kept, as above). So the time follows the processor, and with one run per leg and a different VM each time no difference in time between two legs is an effect of the cap; the README and the site say so beside the figures.
 
 ## What it does not show
 
@@ -282,7 +282,7 @@ different VMs and ordered them differently (its 5 GiB leg was the slowest, this 
 ## What the runs answered, of the eight open questions
 
 1. **The struct marshalling.** The 144-byte assertion held and `SetInformationJobObject` accepted the layout. Whether the limit is enforced: **yes** (run 44666921454): the read-back equals what was set on every capped leg, three times, and a commit above the limit is refused.
-2. **That Chrome's children stay inside the job.** Yes, in both runs: `job_escapes` 0 in all nine legs, in 1,748 membership samples (second dispatch) and 2,193 (third); the second dispatch's job listed pwsh, node, the sampler and eight Chrome processes, and the third's membership log shows at most 8 to 10 Chrome processes at once per leg, all in the job.
+2. **That Chrome's children stay inside the job.** Yes, in both runs: `job_escapes` 0 in all nine legs, in 1,748 membership samples (second dispatch) and 2,193 (third); the second dispatch's job listed pwsh, node, the sampler and eight Chrome processes (the second dispatch's counts are raw data not kept, as above; the third's are in the committed summaries), and the third's membership log shows at most 8 to 10 Chrome processes at once per leg, all in the job.
 3. **How the runner nests its own job.** `AssignProcessToJobObject` succeeded on all nine legs: the runner's step allows nesting, no `assignError` was written, and the flags and the limit read back unchanged after the process was in the job.
 4. **The sampler's real interval.** A median of 537 to 561 ms per run in the second dispatch and 540 to 559 ms per leg in the third (`sampler_median_interval_ms`), against the 500 ms it sleeps.
 5. **The commit figures.** In the second dispatch the Chrome-only sum and `PeakJobMemoryUsed` agreed to within the pwsh, node and sampler share (418 to 587 MiB) where the sampler caught the highest runs. In the third, the leg with no limit reads a whole-tree peak of 5,800 MiB against a Chrome-only maximum of 5,334 MiB (466 MiB for pwsh, node and the sampler); on a capped leg

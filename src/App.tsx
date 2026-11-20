@@ -352,6 +352,13 @@ export function App({
           <a href="https://github.com/AirplaneMode-Labs/dockit" rel="noopener">
             dockit on GitHub
           </a>{' '}
+          ·{' '}
+          <a
+            href="https://github.com/AirplaneMode-Labs/dockit/tree/main/docs/benchmarks"
+            rel="noopener"
+          >
+            Raw benchmark results
+          </a>{' '}
           · <a href="https://airplanemode-labs.github.io/site/">Airplane Mode Labs</a> · Apache-2.0
           · <a href="./THIRD-PARTY-NOTICES.txt">Third-party notices</a>
         </p>
