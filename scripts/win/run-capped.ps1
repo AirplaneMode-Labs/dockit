@@ -10,14 +10,18 @@
 #      node, the Windows sampler and every Chrome process started from here inherit it (no breakaway flag is ever set);
 #   4. starts node scripts/bench-e2e.mjs with an --environment label built from this machine's own WMI facts, and every 2 seconds checks each chrome.exe
 #      that carries the benchmark profile folder with IsProcessInJob, writing job-membership.jsonl and counting any process outside the job as an escape;
-#   5. writes job-summary.json (cap, limit, PeakJobMemoryUsed, escapes) and exits with the benchmark's exit code.
-# It prints no environment variable and makes no network call. It has never run: the first run is the bench-windows workflow, and
-# scripts/win/README.md lists what only that run can prove. The job's handle is never closed here: KILL_ON_JOB_CLOSE would end this process with it.
+#   5. writes job-summary.json (cap, limit, PeakJobMemoryUsed, escapes) and exits with the benchmark's exit code (124 when the time limit below stopped it, and 5
+#      for an unexpected error of this script, which is also written to the summary).
+# It prints no environment variable and makes no network call. It has never run on Windows: the first dispatch of the bench-windows workflow (run 44651054609)
+# stopped at the checksum step, before this script was reached, and scripts/win/README.md lists what only a real run can prove. The job's handle is never closed
+# here: KILL_ON_JOB_CLOSE would end this process with it. TimeoutMinutes (default 80) is below the workflow's 90-minute job limit, so a benchmark that hangs is
+# stopped here, with its children, and still leaves job-summary.json and the log for the upload step, instead of being cancelled by the runner.
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)][string]$Cap,
   [Parameter(Mandatory = $true)][string]$OutDir,
-  [int]$Runs = 5
+  [int]$Runs = 5,
+  [int]$TimeoutMinutes = 80
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -204,6 +208,8 @@ if ([DockitJob]::StructSize() -ne 144) {
   exit 3
 }
 
+# every path below is absolute: .NET (File.Open, WriteAllText) resolves a relative one against the process working directory, PowerShell against its own location
+$OutDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutDir)
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $summaryFile = Join-Path $OutDir 'job-summary.json'
 $membershipFile = Join-Path $OutDir 'job-membership.jsonl'
@@ -237,33 +243,34 @@ try {
 Write-Host "run-capped: job created, cap $Cap, this process is in it"
 Write-Host "run-capped: $label"
 
-# the benchmark: node and everything it starts inherit the job
-$node = (Get-Command node -CommandType Application | Select-Object -First 1).Source
-$env:DOCKIT_BENCH_CSV = Join-Path $OutDir 'e2e-emulated-win-vm.csv'
-$env:DOCKIT_BENCH_Q_CSV = Join-Path $OutDir 'e2e-emulated-win-vm-questions.csv'
-$benchArgs = @('scripts/bench-e2e.mjs', '--environment', ('"' + $label + '"'), '--dist', 'dist', '--runs', "$Runs")
-$proc = Start-Process -FilePath $node -ArgumentList $benchArgs -WorkingDirectory (Get-Location).Path -NoNewWindow -PassThru -RedirectStandardOutput $logFile -RedirectStandardError $errFile
-$null = $proc.Handle
-
+# state of the run: set before the first function or statement that can fail, so the catch below can always read it
+$proc = $null
 $escaped = New-Object 'System.Collections.Generic.HashSet[int]'
 $samples = 0
 $chromeSeenMax = 0
 $unknownMax = 0
 $logPos = 0L
+$exitCode = 1
+$timedOut = $false
 
 function Show-NewLog {
-  # prints what node has written to bench.log since the last call, so the Actions log shows the run as it happens
-  if (-not (Test-Path $logFile)) { return }
-  $fs = [System.IO.File]::Open($logFile, 'Open', 'Read', 'ReadWrite')
+  # prints what node has written to bench.log since the last call, so the Actions log shows the run as it happens. A read that fails (a sharing violation, a file not
+  # there yet) is skipped: the file is complete either way and is uploaded, so it is never a reason to stop the benchmark
   try {
-    if ($fs.Length -gt $script:logPos) {
-      $null = $fs.Seek($script:logPos, 'Begin')
-      $buf = New-Object byte[] ($fs.Length - $script:logPos)
-      $n = $fs.Read($buf, 0, $buf.Length)
-      $script:logPos += $n
-      Write-Host ($utf8.GetString($buf, 0, $n)) -NoNewline
-    }
-  } finally { $fs.Dispose() }
+    if (-not (Test-Path -LiteralPath $logFile)) { return }
+    $fs = [System.IO.File]::Open($logFile, 'Open', 'Read', 'ReadWrite')
+    try {
+      if ($fs.Length -gt $script:logPos) {
+        $null = $fs.Seek($script:logPos, 'Begin')
+        $buf = New-Object byte[] ([int]($fs.Length - $script:logPos))
+        $n = $fs.Read($buf, 0, $buf.Length)
+        $script:logPos += $n
+        Write-Host ($utf8.GetString($buf, 0, $n)) -NoNewline
+      }
+    } finally { $fs.Dispose() }
+  } catch {
+    Write-Host "run-capped: bench.log could not be read just now: $($_.Exception.Message)"
+  }
 }
 
 function Test-Membership {
@@ -299,28 +306,54 @@ function Test-MembershipOnce {
   Add-Content -Path $membershipFile -Value ($line | ConvertTo-Json -Compress)
 }
 
-while (-not $proc.HasExited) {
+# the benchmark: node and everything it starts inherit the job. Anything this script does not expect ends in the catch below, which says so in the summary and the
+# log (a bare terminating error would leave neither) and stops node and its children.
+try {
+  $node = (Get-Command node -CommandType Application | Select-Object -First 1).Source
+  $env:DOCKIT_BENCH_CSV = Join-Path $OutDir 'e2e-emulated-win-vm.csv'
+  $env:DOCKIT_BENCH_Q_CSV = Join-Path $OutDir 'e2e-emulated-win-vm-questions.csv'
+  $benchArgs = @('scripts/bench-e2e.mjs', '--environment', ('"' + $label + '"'), '--dist', 'dist', '--runs', "$Runs")
+  $proc = Start-Process -FilePath $node -ArgumentList $benchArgs -WorkingDirectory (Get-Location).Path -NoNewWindow -PassThru -RedirectStandardOutput $logFile -RedirectStandardError $errFile
+  $null = $proc.Handle
+  Write-Host "run-capped: started $node as process $($proc.Id); it is stopped after $TimeoutMinutes minutes if it has not finished"
+
+  $clock = [System.Diagnostics.Stopwatch]::StartNew()
+  while (-not $proc.HasExited) {
+    Test-Membership
+    Show-NewLog
+    if ($clock.Elapsed.TotalMinutes -ge $TimeoutMinutes) {
+      $timedOut = $true
+      Write-Host "::error::run-capped: the benchmark had not finished after $TimeoutMinutes minutes; stopping it and its children"
+      try { $proc.Kill($true) } catch { Write-Host "run-capped: it could not be stopped: $($_.Exception.Message)" }
+      break
+    }
+    Start-Sleep -Seconds 2
+  }
+  $null = $proc.WaitForExit(120000)
   Test-Membership
   Show-NewLog
-  Start-Sleep -Seconds 2
-}
-$proc.WaitForExit()
-Test-Membership
-Show-NewLog
-if (Test-Path $errFile) { Get-Content -Path $errFile | ForEach-Object { Write-Host $_ } }
+  if (Test-Path -LiteralPath $errFile) { Get-Content -LiteralPath $errFile | ForEach-Object { Write-Host $_ } }
 
-$peak = [DockitJob]::PeakJobMemory($job)
-# a missing exit code (the known Start-Process -PassThru pitfall) is a failure, never a pass
-$exitCode = if ($null -eq $proc.ExitCode) { 1 } else { [int]$proc.ExitCode }
-Write-Summary @{
-  peakJobMemoryBytes = [int64]$peak
-  escapes = $escaped.Count
-  escapedPids = @($escaped)
-  membershipSamples = $samples
-  chromeProcessesSeenMax = $chromeSeenMax
-  unknownMembershipMax = $unknownMax
-  benchExitCode = $exitCode
+  $peak = [DockitJob]::PeakJobMemory($job)
+  # a missing exit code (the known Start-Process -PassThru pitfall) is a failure, never a pass; the time limit has a code of its own
+  $exitCode = if ($timedOut) { 124 } elseif ($null -eq $proc.ExitCode) { 1 } else { [int]$proc.ExitCode }
+  Write-Summary @{
+    peakJobMemoryBytes = [int64]$peak
+    escapes = $escaped.Count
+    escapedPids = @($escaped)
+    membershipSamples = $samples
+    chromeProcessesSeenMax = $chromeSeenMax
+    unknownMembershipMax = $unknownMax
+    benchExitCode = $exitCode
+    timedOut = $timedOut
+  }
+  Write-Host "run-capped: peak job commit $peak bytes, Chrome processes outside the job: $($escaped.Count), benchmark exit code $exitCode"
+  if ($escaped.Count -gt 0) { Write-Host "::warning::run-capped: $($escaped.Count) Chrome process(es) were seen outside the job; the whole-tree figure under-counts" }
+} catch {
+  $message = $_.Exception.Message
+  [Console]::Error.WriteLine("run-capped: unexpected error: $message")
+  try { if ($null -ne $proc -and -not $proc.HasExited) { $proc.Kill($true) } } catch { $null = $_ }
+  $exitCode = 5
+  try { Write-Summary @{ scriptError = $message; benchExitCode = $exitCode } } catch { $null = $_ }
 }
-Write-Host "run-capped: peak job commit $peak bytes, Chrome processes outside the job: $($escaped.Count), benchmark exit code $exitCode"
-if ($escaped.Count -gt 0) { Write-Host "::warning::run-capped: $($escaped.Count) Chrome process(es) were seen outside the job; the whole-tree figure under-counts" }
 exit $exitCode

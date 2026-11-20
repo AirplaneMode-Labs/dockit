@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- The first dispatch of the manual Windows benchmark (`bench-windows`, run 44651054609 on `f886506`) failed on all four legs, at its first Windows step: the check of `dist-SHA256SUMS` ran
+  `sha256sum --binary --check`, and GNU `sha256sum` (the one in Git for Windows' bash, and in ubuntu) refuses `--binary` and `--text` together with `--check`
+  ("meaningless when verifying checksums"). The macOS `sha256sum` accepts them, so the workflow's own test pinned the string. The check is now `sha256sum --check --strict --quiet` (each line's
+  `*` marker, written by the build job, sets the binary mode) plus a test that no line lacks the `*`; a new test runs that line on the machine's real `sha256sum` (GNU on the ubuntu and windows
+  legs of CI) against a tampered file. Nothing after that step had run, so `run-capped.ps1`, the Job Object and the benchmark are still unproven on Windows. (D5-03)
+- `scripts/win/run-capped.ps1`, before its first run: every path is absolute (a .NET call resolved a relative one against another directory than PowerShell's), reading the log is never fatal, a
+  benchmark that outlives 80 minutes (the workflow's job limit is 90) is stopped with its children and leaves `job-summary.json` (exit 124, `timedOut`), and an unexpected error is recorded in
+  the summary, the log and the exit code (5, `scriptError`) instead of ending the step without either. PowerShell's own parser now reads the script and the workflow's two pwsh steps in the tests
+  (skipped without pwsh). (D5-03)
+- The harness: a `DevToolsActivePort` with CRLF line endings no longer leaves a carriage return in the debugging URL, and Chrome gets 120 s, not Playwright's 30 s, for its first start on a cold
+  VM (no figure depends on it). (D5-02)
 
 ## [0.4.0-dev] - 2026-11-20 (untagged)
 

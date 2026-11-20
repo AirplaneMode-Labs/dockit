@@ -28,16 +28,19 @@ charge the outer limit.
 - `e2e-emulated-win-vm.csv` and `e2e-emulated-win-vm-questions.csv`: the rows, with an `environment` column and the emulated columns
   (`scripts/lib/bench-columns.mjs`). The job columns are filled in afterwards by `scripts/bench-emulated-merge.mjs` from `job-summary.json`.
 - `bench.log`: the benchmark's console output.
-- `job-summary.json`: the cap, the limit, `PeakJobMemoryUsed` (the whole tree's peak commit), the number of Chrome processes seen outside the job, and the
-  benchmark's exit code.
+- `job-summary.json`: the cap, the limit, `PeakJobMemoryUsed` (the whole tree's peak commit), the number of Chrome processes seen outside the job, the
+  benchmark's exit code and `timedOut`. The script itself exits 124 when it had to stop the benchmark after `-TimeoutMinutes` (80, below the job's 90-minute limit; the children
+  are stopped with it) and 5 for an error it did not expect, which is written as `scriptError`; both leave the summary, the log and the membership file for the upload.
 - `job-membership.jsonl`: one line every 2 seconds: how many `chrome.exe` carrying the benchmark profile were running, how many `IsProcessInJob` put in the job,
   which ones were outside it (escapes) and the process ids the job lists.
 - `env.txt` (written by the workflow before this script): the machine's own facts, never an environment variable.
 
 ## What only the first run can prove
 
-None of this has run: this repository's developer machine has no Windows and no pwsh. These are the open questions the first dispatch answers. A leg that
-fails for one of them is a result, not a surprise.
+None of this has run: this repository's developer machine has no Windows. The first dispatch of the workflow (run 44651054609, 20 Nov 2026) did not reach it: every
+leg stopped at the check of `dist-SHA256SUMS`, where `sha256sum --binary --check` is a usage error for GNU `sha256sum` (fixed; see the CHANGELOG), so nothing below has been
+answered yet. PowerShell's own parser reads the script and the workflow's pwsh steps in the tests, and the script's logic was run on a Mac with the Windows calls stubbed;
+neither is a run on Windows. These are the open questions the next dispatch answers. A leg that fails for one of them is a result, not a surprise.
 
 1. **The struct marshalling.** `Marshal.SizeOf(JOBOBJECT_EXTENDED_LIMIT_INFORMATION)` is asserted to be 144 bytes before any call; whether
    `SetInformationJobObject` accepts the layout, and whether the limit is enforced, is shown only by the run.

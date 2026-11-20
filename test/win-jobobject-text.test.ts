@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { SPAWN_TEST_TIMEOUT_MS } from './helpers/timeouts.ts';
+import { hasPwsh, pwshParseErrors } from './helpers/pwsh.ts';
 
-// scripts/win/run-capped.ps1 has never run: this Mac has no pwsh and the first run is the bench-windows workflow after the push. So this file is a static
+// scripts/win/run-capped.ps1 has never run on Windows: this Mac has no Windows and the first run is the bench-windows workflow. So this file is a static
 // check of its text (S1, TD-113): only documented kernel32 calls, exactly the two limit-flag values, no breakaway, no download, no environment dump, one
 // inline C# class compiled by Add-Type -TypeDefinition, the 144-byte size assertion before any call, and the cap validated. It proves what the file says;
 // the struct marshalling and the job membership of Chrome's children are proven only by the first Windows run (scripts/win/README.md lists them).
@@ -203,6 +205,47 @@ describe('run-capped.ps1: what it writes and how it launches the benchmark', () 
     // calls only: the declaration of the import ('extern bool CloseHandle(IntPtr hObject)') is not one
     const closes = [...code.matchAll(/(?<!extern bool )CloseHandle\(([^)]*)\)/gu)].map((m) => m[1]);
     expect(closes).toEqual(['h']); // the process handle of the membership check, in the C# helper
+  });
+});
+
+// First dispatch (run 44651054609): the workflow stopped at its checksum step on every leg, so this script has still not run on Windows. What is checked here is what can be
+// checked without Windows: PowerShell's own parser reads the whole file (pwsh is preinstalled on every GitHub runner; where there is none the test is skipped), and the text
+// holds the guards that keep a first run from ending without a trace.
+describe('run-capped.ps1: parses, and cannot end without a trace', () => {
+  it.skipIf(!hasPwsh())(
+    'PowerShell parses the whole file without an error',
+    { timeout: SPAWN_TEST_TIMEOUT_MS },
+    () => {
+      expect(pwshParseErrors(raw)).toEqual([]);
+    },
+  );
+
+  it('makes OutDir absolute before any .NET call resolves a path against the process working directory', () => {
+    const abs = code.search(
+      /\$OutDir = \$ExecutionContext\.SessionState\.Path\.GetUnresolvedProviderPathFromPSPath\(\$OutDir\)/u,
+    );
+    expect(abs).toBeGreaterThan(0);
+    expect(abs).toBeLessThan(code.search(/\[System\.IO\.File\]::Open\(/u));
+    expect(abs).toBeLessThan(code.search(/\$summaryFile = Join-Path/u));
+  });
+
+  it('stops a benchmark that outlives its time limit, below the workflow job limit, with its children, and records it', () => {
+    expect(code).toMatch(/\[int\]\$TimeoutMinutes = 80/u);
+    const wf = readFileSync(join(root, '.github', 'workflows', 'bench-windows.yml'), 'utf8');
+    const job = Number(/timeout-minutes: (\d+)/u.exec(wf)![1]);
+    expect(80).toBeLessThan(job);
+    expect(code).toMatch(/\$proc\.Kill\(\$true\)/u);
+    expect(code).toMatch(/\$exitCode = if \(\$timedOut\) \{ 124 \}/u);
+    expect(code).toMatch(/timedOut = \$timedOut/u);
+  });
+
+  it('reading the log is never fatal, and an unexpected error is written to the summary, the log and the exit code (5) with node and its children stopped', () => {
+    const show = /function Show-NewLog \{[\s\S]*?\n\}\n/u.exec(code)![0];
+    expect(show).toMatch(/\btry \{[\s\S]*\} catch \{/u);
+    expect(code).toMatch(/\$proc = \$null\n/u); // defined before the catch can read it (strict mode refuses an unset variable)
+    expect(code).toMatch(/\} catch \{\n {2}\$message = \$_\.Exception\.Message\n/u);
+    expect(code).toMatch(/scriptError = \$message/u);
+    expect(code).toMatch(/\$exitCode = 5/u);
   });
 });
 

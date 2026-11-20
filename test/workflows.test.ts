@@ -1,6 +1,11 @@
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { SPAWN_TEST_TIMEOUT_MS } from './helpers/timeouts.ts';
+import { hasPwsh, pwshParseErrors } from './helpers/pwsh.ts';
 
 const wf = (name: string) =>
   readFileSync(join(__dirname, '..', '.github', 'workflows', name), 'utf8');
@@ -353,7 +358,13 @@ describe('bench-windows.yml: the bench job (windows-latest), one leg per cap', (
     expect(check).toBeDefined();
     expect(check).toMatch(/shell: bash/u);
     expect(check).toMatch(/--strict/u);
-    expect(check).toMatch(/sha256sum --binary --check/u);
+    // GNU sha256sum (ubuntu, Git for Windows) refuses --binary or --text with --check: run 44651054609 failed on all four legs on exactly that. The mode of each file
+    // comes from the '*' the build job wrote in its line, and a second test in the step refuses any line without it.
+    expect(check).toMatch(/^\s+sha256sum --check --strict --quiet dist-SHA256SUMS$/mu);
+    expect(check).not.toMatch(
+      /sha256sum[^\n]*--(binary|text)\b[^\n]*--check|sha256sum[^\n]*--check[^\n]*--(binary|text)\b/u,
+    );
+    expect(check).toMatch(/grep -c -v -E '\^\[0-9a-f\]\{64\} \\\*dist\/' dist-SHA256SUMS/u);
     expect(all.indexOf(check)).toBeGreaterThan(all.indexOf(dl));
     expect(all.indexOf(check)).toBeLessThan(all.findIndex((s) => /run-capped\.ps1/u.test(s)));
     // the count of files in dist equals the count of lines in the sums: no file outside the sums is served
@@ -425,4 +436,83 @@ describe('bench-windows.yml: the bench job (windows-latest), one leg per cap', (
       /npm (install|i)\b|pip install|choco |winget |Invoke-WebRequest|curl /u,
     );
   });
+});
+
+// The first dispatch (run 44651054609) failed on all four legs at `sha256sum --binary --check`: GNU sha256sum refuses --binary and --text with --check. The macOS sha256sum
+// accepts them, which is why nothing caught it here. This runs the check line of the workflow, word for word, on the sha256sum of the machine the tests run on: on the
+// ubuntu leg of CI that is GNU, on the windows leg it is the one in Git for Windows (the very program of the bench job). Where there is no sha256sum the test is skipped.
+describe('bench-windows.yml: the checksum check line runs for real', () => {
+  const text = wf('bench-windows.yml');
+  const probe = spawnSync('sha256sum', ['--version'], { encoding: 'utf8' });
+  const have = probe.error === undefined && probe.status === 0;
+  const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+
+  it.skipIf(!have)(
+    'accepts the sums the build step writes (binary lines with a star), refuses a changed byte, and refuses --binary together with --check on a GNU sha256sum',
+    { timeout: SPAWN_TEST_TIMEOUT_MS },
+    () => {
+      const line = /^\s+(sha256sum --check[^\n]*)$/mu.exec(text);
+      expect(line, 'the check line').not.toBeNull();
+      const checkArgs = line![1]!.trim().split(/\s+/u).slice(1);
+      expect(checkArgs).toEqual(['--check', '--strict', '--quiet', 'dist-SHA256SUMS']);
+
+      const dir = mkdtempSync(join(tmpdir(), 'dockit-sums-'));
+      mkdirSync(join(dir, 'dist', 'sub'), { recursive: true });
+      const files: [string, Buffer][] = [
+        ['dist/a.txt', Buffer.from('line one\r\nline two\r\n')], // CRLF bytes: the case a text-mode read would change
+        ['dist/sub/b.bin', Buffer.from([0, 1, 2, 13, 10, 255, 254, 26])],
+      ];
+      for (const [name, bytes] of files) writeFileSync(join(dir, name), bytes);
+      // the build step's lines: '<hash> *<path>', LF endings, sorted
+      const sums = files.map(([name, bytes]) => `${sha(bytes)} *${name}\n`).join('');
+      writeFileSync(join(dir, 'dist-SHA256SUMS'), sums);
+
+      const run = (args: string[]) => spawnSync('sha256sum', args, { cwd: dir, encoding: 'utf8' });
+      const ok = run(checkArgs);
+      expect({ status: ok.status, failed: /FAILED/u.test(ok.stderr + ok.stdout) }).toEqual({
+        status: 0,
+        failed: false,
+      });
+
+      writeFileSync(
+        join(dir, 'dist', 'sub', 'b.bin'),
+        Buffer.from([0, 1, 2, 13, 10, 255, 254, 27]),
+      );
+      expect(run(checkArgs).status).toBe(1);
+
+      // what the workflow said before: on a GNU sha256sum this is a usage error whatever the files hold (the macOS one does not care, so only the GNU one is asserted)
+      if (/GNU coreutils/u.test(probe.stdout)) {
+        writeFileSync(join(dir, 'dist', 'sub', 'b.bin'), files[1]![1]);
+        const old = run(['--binary', ...checkArgs]);
+        expect(old.status).not.toBe(0);
+        expect(old.stderr).toMatch(/meaningless when verifying checksums/u);
+      }
+    },
+  );
+});
+
+// The pwsh steps of the workflow have never run on Windows either. PowerShell's own parser (pwsh is preinstalled on every GitHub runner and on the developer's Mac) reads each
+// of them; where there is no pwsh the test is skipped. A parse is not a run, but it catches the quoting and syntax mistakes that would end a leg at once.
+describe('bench-windows.yml: every pwsh step parses', () => {
+  const text = wf('bench-windows.yml');
+  const bench = jobs(text)['bench']!;
+  const blocks = steps(bench)
+    .filter((s) => /^\s+shell: pwsh$/mu.test(s))
+    .map((s) => /^ {8}run: \|\n((?: {10}.*(?:\n|$)|\n)*)/mu.exec(s)?.[1] ?? '');
+
+  it('there are two pwsh steps, each with a body', () => {
+    expect(blocks.length).toBe(2);
+    for (const b of blocks) expect(b.trim().length).toBeGreaterThan(20);
+  });
+
+  it.skipIf(!hasPwsh())(
+    'each pwsh run block parses without an error',
+    { timeout: SPAWN_TEST_TIMEOUT_MS },
+    () => {
+      for (const b of blocks) {
+        const body = b.replace(/^ {10}/gmu, '');
+        expect(pwshParseErrors(body)).toEqual([]);
+      }
+    },
+  );
 });
