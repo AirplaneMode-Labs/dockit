@@ -1,12 +1,12 @@
 {
   "name": "@airplanemode/dockit",
-  "version": "0.3.0-dev",
+  "version": "0.4.0-dev",
   "private": true,
   "description": "Offline document intelligence kit: an installable PWA that answers a question over a PDF with a small local model, in the browser, with no request after the models are cached.",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12"
   },
   "repository": {
     "type": "git",
@@ -31,6 +31,7 @@
     "assemble": "node scripts/assemble-deps.mjs --siblings .. --allow-dirty",
     "test:e2e": "playwright test -c playwright.e2e.config.ts test/e2e.spec.ts",
     "test:gate": "playwright test -c playwright.e2e.config.ts test/gate.spec.ts",
+    "test:failfast": "playwright test -c playwright.e2e.config.ts test/e2e/failfast-crash.spec.ts",
     "bench:e2e": "node scripts/bench-e2e.mjs",
     "fixtures": "node scripts/make-fixture-pdfs.mjs",
     "fixtures:check": "node scripts/make-fixture-pdfs.mjs --check"
@@ -45,11 +46,11 @@
     "@types/node": "22.20.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
-    "@vitejs/plugin-react": "5.2.0",
+    "@vitejs/plugin-react": "6.3.0",
     "playwright": "1.65.0",
     "prettier": "3.9.10",
     "typescript": "5.9.3",
-    "vite": "7.3.7",
+    "vite": "8.3.8",
     "vitest": "4.1.12"
   },
   "overrides": {

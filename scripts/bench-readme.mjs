@@ -6,7 +6,12 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LAPTOP_8GB } from './lib/bench-columns.mjs';
+import {
+  E2E_EMULATED_COLUMNS,
+  EMULATED_E2E_FILE,
+  LAPTOP_8GB,
+  validateEnvironmentLabel,
+} from './lib/bench-columns.mjs';
 import { memoryFigures, memoryWords, parseCsv, TARGET } from './memory-figures.mjs';
 import { statusLine } from './status-line.mjs';
 
@@ -159,6 +164,76 @@ export function memoryComparison(baseE2e, baseQ, afterE2e, afterQ) {
   ].join('\n');
 }
 
+const MIB_N = 1048576;
+const GIB_N = 1073741824;
+const E2E_EMULATED = join(root, 'docs', 'benchmarks', EMULATED_E2E_FILE);
+
+/**
+ * The README subsection for the emulated Windows run (B6, TD-113), generated from docs/benchmarks/e2e-emulated-win-vm.csv and from nothing else. It exists only when
+ * that CSV does: with no text this returns '' and applyEmulated() leaves the README as it was. Every row's environment label is printed verbatim, and the
+ * laptop_8gb cell is 'not measured on 8 GB' in every row (the CSV is refused otherwise).
+ */
+export function emulatedBlock(text) {
+  if (text === undefined) return '';
+  const head = text.split('\n')[0];
+  if (head !== E2E_EMULATED_COLUMNS.join(','))
+    throw new Error(`${EMULATED_E2E_FILE}: the header is not E2E_EMULATED_COLUMNS`);
+  const rows = parseCsv(text);
+  rows.forEach((r, i) => {
+    if (r.laptop_8gb !== LAPTOP_8GB)
+      throw new Error(`${EMULATED_E2E_FILE}: row ${i + 1}: laptop_8gb must read '${LAPTOP_8GB}'`);
+    validateEnvironmentLabel(r.environment);
+  });
+  if (rows.length === 0) return '';
+  const legs = [...new Set(rows.map((r) => r.environment))];
+  const out = [
+    '### Emulated Windows (not a laptop)',
+    '',
+    `Generated from \`docs/benchmarks/${EMULATED_E2E_FILE}\`, the result of the manual \`bench-windows\` workflow: the same \`bench:e2e\` on a GitHub-hosted Windows Server VM, with the pwsh, node and Chrome process tree inside a Windows Job Object whose commit limit is the cap of the leg (none, 8, 6 and 5 GiB). The job limit covers the pwsh, node and Chrome process tree, so the whole-tree peak is a little above the Chrome-only peak. A commit limit is not a physical-memory limit: the VM has more RAM than a laptop, nothing is paged under pressure, and a leg either fits or an allocation fails. These rows are never laptop rows and fill no 8 GB cell. The Sprint 5 done-when stays NOT met (owner runbook step 5).`,
+    '',
+    '| Environment (verbatim) | Runs | Job commit limit | Peak commit, whole tree: pwsh, node and Chrome (median / worst) | Peak commit, Chrome only (median / worst) | Chrome processes outside the job | Time to first token, ms (median / worst) | Total, ms (median / worst) | Result | Commit | 8 GB laptop |',
+    '|---|---|---|---|---|---|---|---|---|---|---|',
+  ];
+  for (const env of legs) {
+    const r = rows.filter((x) => x.environment === env);
+    const session = r.filter((x) => x.restart !== 'true');
+    const failure = r.map((x) => x.failure_reason).find((x) => x !== '');
+    const limit = r[0].job_commit_limit_bytes;
+    const peak = r.map((x) => num(x.job_commit_peak_bytes)).filter((x) => x !== null);
+    const escapes = r.map((x) => num(x.job_escapes)).filter((x) => x !== null);
+    const result = failure
+      ? `fail: ${failure}`
+      : session.length >= 5 && r.length > session.length
+        ? 'pass'
+        : 'incomplete';
+    out.push(
+      `| ${env} | ${r.length} | ${limit === '' ? 'no limit' : `${Number(limit) / GIB_N} GiB`} | ${peak.length ? mib(Math.max(...peak)) : 'not measured'} | ${pair(r, 'process_commit_peak_bytes', mib)} | ${escapes.length ? Math.max(...escapes) : 'not measured'} | ${pair(r, 'first_token_ms', f)} | ${pair(r, 'total_ms', f)} | ${result} | \`${[...new Set(r.map((x) => x.commit))].join(', ')}\` | ${LAPTOP_8GB} |`,
+    );
+  }
+  out.push(
+    '',
+    "Column notes. Peak commit is the Windows commit size (PrivatePageCount, in bytes), which is what a Job Object limit adds up; the whole-tree figure is the job's PeakJobMemoryUsed for the whole run and is the same in every row of a leg, the Chrome-only figure is the sum over the Chrome process tree of this run. The Windows sampler had never run on Windows before the first dispatch; its tick count and median interval are in the sampler_median_interval_ms column. A leg that is incomplete or failed says so in the Result column and keeps every row it wrote.",
+  );
+  return out.join('\n');
+}
+
+const E2E_EMULATED_START = '<!-- bench-emulated:start -->';
+const E2E_EMULATED_END = '<!-- bench-emulated:end -->';
+/** Puts the emulated block after the benchmark block, or removes it when there is none; the README is unchanged when there was nothing and is nothing. */
+export function applyEmulated(readme, block) {
+  const a = readme.indexOf(E2E_EMULATED_START);
+  const b = readme.indexOf(E2E_EMULATED_END);
+  const had = a >= 0 && b > a;
+  const stripped = had
+    ? `${readme.slice(0, a)}${readme.slice(b + E2E_EMULATED_END.length).replace(/^\n/u, '')}`
+    : readme;
+  if (block === '') return stripped;
+  const at = stripped.indexOf(END);
+  if (at < 0) throw new Error('README.md has no bench:start / bench:end markers');
+  const after = at + END.length;
+  return `${stripped.slice(0, after)}\n${E2E_EMULATED_START}\n${block}\n${E2E_EMULATED_END}${stripped.slice(after)}`;
+}
+
 const START = '<!-- bench:start -->';
 const END = '<!-- bench:end -->';
 export function apply(readme, block) {
@@ -192,7 +267,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const cur = readFileSync(README, 'utf8');
   const rd = (p) => readFileSync(p, 'utf8');
   const pair4 = [rd(E2E_BASE), rd(QCSV_BASE), rd(E2E), rd(QCSV)];
-  const next = applyInline(apply(cur, table()), memoryFigures(...pair4), statusLine(...pair4));
+  const emulated = existsSync(E2E_EMULATED) ? readFileSync(E2E_EMULATED, 'utf8') : undefined;
+  const next = applyEmulated(
+    applyInline(apply(cur, table()), memoryFigures(...pair4), statusLine(...pair4)),
+    emulatedBlock(emulated),
+  );
   if (process.argv.includes('--check')) {
     if (cur !== next) {
       console.error('README.md benchmark block is out of date: run node scripts/bench-readme.mjs');

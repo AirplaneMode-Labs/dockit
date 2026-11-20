@@ -14,4 +14,6 @@ export function connectCdp(
   ledger: Ledger;
   close(): void;
   getTargets(): Promise<{ targetInfos: { type: string; url: string; title?: string }[] }>;
+  /** Calls cb for a crashed target or a closed debugging socket; returns the function that stops the calls. */
+  onFailure(cb: (f: { kind: string; targetType?: string; status?: string }) => void): () => boolean;
 }>;

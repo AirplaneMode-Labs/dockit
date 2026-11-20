@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Writes src/status-line-text.ts: the Sprint 6 status line, with the memory figures derived from the committed CSVs by scripts/memory-figures.mjs
+// Writes src/status-line-text.ts: the Sprint 7 status line (the Sprint 6 memory figures re-measured on a quiet machine, TD-101), with the memory figures derived from the committed CSVs by scripts/memory-figures.mjs
 // (BUG-T1-S6-04: no hand-typed figure, one rounding rule). The line is also written to the file named by --also (the workspace copy the site syncs).
 //   node scripts/status-line.mjs            rewrite src/status-line-text.ts
 //   node scripts/status-line.mjs --check    exit 1 unless the file is exactly this
@@ -21,16 +21,13 @@ export function statusLine(baseE2e, baseQ, afterE2e, afterQ) {
   const qs = parseCsv(afterQ).filter((r) => r.correct_source_page !== '');
   const ok = qs.filter((r) => r.answer_ok === 'true' && r.correct_source_page === 'true').length;
   const reached = f.after.rssMedianMiB <= TARGET.rssMedianMiB;
-  const slower = f.timeRiseMs >= 0 ? 'slower' : 'faster';
   return (
-    'Sprint 6 (19 Nov 2026): Working: ask a question about a PDF and read an answer from a small local model (Qwen3-0.6B, WebAssembly) with the source pages shown, as before, now with one model in memory at a time: ' +
-    `the Chrome process tree peaked at a median of ${w.afterMedian}, down from ${w.beforeMedian}, ` +
-    `${reached ? 'within' : 'short of'} the ${TARGET.rssMedianMiB.toLocaleString('en-US')} MiB target (each median is of ${f.after.runs} in-session runs), with the fixed question set unchanged at ${ok} of ${qs.length} and every answer about ${Math.abs(Number(w.slowerSeconds)).toFixed(1)} seconds ${slower} (not measured on 8 GB); ` +
-    'the capability card states the memory line read from the signed model list, a device that reports less is refused before any model byte is read, and an out-of-memory failure in the engine is a plain refusal; ' +
-    'a PDF with a font, image or other part that unpacks to more than a limit, or whose structure cannot be checked, is refused before pdf.js opens it; ' +
-    'a Stop is logged as aborted; ' +
+    'Sprint 7 (20 Nov 2026): Working: the same app as Sprint 6 (ask a question about a PDF and read an answer from a small local model, Qwen3-0.6B in WebAssembly, with the source pages shown, one model in memory at a time; nothing about the page changed in Sprint 7); ' +
+    `its memory figure was re-measured on a quiet machine on the committed Sprint 6 build: the Chrome process tree peaked at a median of ${w.afterMedian}, down from ${w.beforeMedian} before the Sprint 6 memory work, ` +
+    `${reached ? 'within' : 'still short of'} the ${TARGET.rssMedianMiB.toLocaleString('en-US')} MiB target (each median is of ${f.after.runs} in-session runs), with the fixed question set at ${ok} of ${qs.length} and a median answer time of ${w.afterQMedianMs} (Apple M5 Pro 48 GB, not measured on 8 GB); ` +
+    'a Windows benchmark under an emulated memory cap (a GitHub-hosted virtual machine, never a laptop) is written and has not run; ' +
     "after the one-time model download no request leaves the page (proved on a local build in installed Chrome on an Apple M5 Pro 48 GB, not measured on 8 GB; live since the owner's push of 18 Nov 2026). " +
-    'Not yet: OCR, a Windows or 8 GB figure, the pilot model (Qwen3-1.7B), a real signing key, WebLLM (cut), multi-document chat.'
+    'Not yet: OCR, a Windows or 8 GB laptop figure (an emulated Windows figure is pending its first run and would not be a laptop figure), the pilot model (Qwen3-1.7B), a real signing key, WebLLM (cut), multi-document chat.'
   );
 }
 

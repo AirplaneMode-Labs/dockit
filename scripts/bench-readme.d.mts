@@ -19,3 +19,7 @@ export const TARGET: Readonly<{
   questionFirstRunMin: number;
 }>;
 export function apply(readme: string, block: string): string;
+/** The README subsection for the emulated Windows run, from the emulated runs CSV text; '' when there is no text or no row. */
+export function emulatedBlock(text: string | undefined): string;
+/** Puts the emulated block after the benchmark block, or removes it when the block is empty. */
+export function applyEmulated(readme: string, block: string): string;

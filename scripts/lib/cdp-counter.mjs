@@ -129,11 +129,32 @@ export async function connectCdp(userDataDir, { timeoutMs = 15000 } = {}) {
       ws.send(JSON.stringify({ id: n, method, params, ...(sessionId ? { sessionId } : {}) }));
     });
   const attach = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true };
+  // B6: a crash or a closed socket is reported to the fail-fast guard (scripts/lib/fail-fast.mjs). Target.targetCrashed arrives for any target that
+  // died (a renderer, a worker, the service worker), so the type of each target is remembered from the events that announce it.
+  const listeners = new Set();
+  const targetTypes = new Map();
+  const failure = (f) => {
+    for (const cb of listeners) cb(f);
+  };
+  let closing = false;
+  ws.addEventListener('close', () => {
+    if (!closing) failure({ kind: 'closed' });
+  });
   ws.addEventListener('message', (m) => {
     const msg = JSON.parse(String(m.data));
     if (msg.id !== undefined)
       return (void pending.get(msg.id)?.(msg.result), pending.delete(msg.id));
     ledger.onEvent(msg.sessionId ?? 'browser', msg.method, msg.params);
+    if (msg.method === 'Target.targetCreated' || msg.method === 'Target.attachedToTarget') {
+      const info = msg.params?.targetInfo;
+      if (info?.targetId) targetTypes.set(info.targetId, info.type);
+    }
+    if (msg.method === 'Target.targetCrashed')
+      failure({
+        kind: 'target_crashed',
+        targetType: targetTypes.get(msg.params?.targetId) ?? 'unknown',
+        status: msg.params?.status ?? '',
+      });
     if (msg.method === 'Target.attachedToTarget') {
       const s = msg.params.sessionId;
       // Queue the three commands without waiting for any answer: a target that is paused at its start (waitForDebuggerOnStart) may not
@@ -144,9 +165,15 @@ export async function connectCdp(userDataDir, { timeoutMs = 15000 } = {}) {
     }
   });
   await send('Target.setAutoAttach', attach);
+  await send('Target.setDiscoverTargets', { discover: true });
   return {
     ledger,
-    close: () => ws.close(),
+    close: () => ((closing = true), ws.close()),
+    /** Calls cb({ kind: 'target_crashed', targetType, status } | { kind: 'closed' }); returns the function that stops it. */
+    onFailure(cb) {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    },
     /** Target.getTargets over the browser-level session: the targets that exist right now (used to sample the worker count, B1 M1). */
     getTargets: () => send('Target.getTargets'),
   };

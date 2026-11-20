@@ -1,0 +1,28 @@
+{
+  "note": "Packages whose lock entry has hasInstallScript. .npmrc sets ignore-scripts=true, so none of these scripts runs on npm ci; the list exists so that a NEW install-script package in a bump is a decision (S1 accepts it in writing, naming it here), not an accident. The first four are the lock of 4e6654f (Sprint 6), accepted as the baseline.",
+  "accepted": [
+    {
+      "name": "esbuild",
+      "accepted": "baseline of Sprint 6 (lock at 4e6654f); ignore-scripts=true; its optional platform packages are hash-pinned"
+    },
+    {
+      "name": "fsevents",
+      "accepted": "baseline of Sprint 6 (lock at 4e6654f); macOS-only optional dependency of the file watcher"
+    },
+    {
+      "name": "onnxruntime-node",
+      "accepted": "baseline of Sprint 6 (lock at 4e6654f); a transitive of @huggingface/transformers; its install script (a binary download) never runs under ignore-scripts=true and dockit uses onnxruntime-web"
+    },
+    {
+      "name": "protobufjs",
+      "accepted": "baseline of Sprint 6 (lock at 4e6654f); a transitive of onnxruntime; ignore-scripts=true"
+    }
+  ],
+  "missingPlatformsAccepted": [
+    {
+      "family": "@img/sharp-libvips",
+      "triple": "win32-x64-msvc",
+      "reason": "sharp ships libvips inside its own win32 packages: there is no separate sharp-libvips package for Windows (the lock of 4e6654f has none, and sharp is a transitive of the transformers library that dockit's browser build never loads)"
+    }
+  ]
+}

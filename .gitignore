@@ -27,5 +27,9 @@ public/app/ort/
 src/generated/
 .cache/
 
+# the Windows benchmark's working folder (bench-windows.yml uploads it; the CSVs worth keeping are copied to docs/benchmarks by hand) and its dist hash list
+bench-out/
+dist-SHA256SUMS
+
 # pages.yml checks the sibling repositories out here
 /deps/

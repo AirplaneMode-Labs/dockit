@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { validateEnvironmentLabel } from './bench-columns.mjs';
 import { connectCdp } from './cdp-counter.mjs';
 import { startRssSampler } from './proc-rss.mjs';
 import { closeServer, serveStatic } from './static-server.mjs';
@@ -14,8 +15,19 @@ export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 export const DIST = join(ROOT, 'dist');
 export const PREFIX = '/dockit/';
 
-export const machineLabel = () =>
-  `${os.cpus()[0]?.model.trim() ?? 'unknown cpu'} ${Math.round(os.totalmem() / 2 ** 30)} GB`;
+/**
+ * The machine named in a benchmark row.
+ *   a label given        the label, verbatim, after validateEnvironmentLabel (an emulated run: 'emulated: ...; not a laptop', never the word laptop
+ *                        anywhere else, never an 8 GB figure)
+ *   no label, ci false   '<cpu model> <N> GB' as before (a developer's own machine)
+ *   no label, ci true    an error: a CI runner must never print a CPU string and a memory size a reader could take for a laptop
+ * `ci` is passed in (scripts/bench-e2e.mjs reads GITHUB_ACTIONS once); this file reads no environment variable.
+ */
+export function machineLabel({ environment, ci = false } = {}) {
+  if (environment !== undefined && environment !== '') return validateEnvironmentLabel(environment);
+  if (ci) throw new Error('a CI runner needs an explicit --environment label');
+  return `${os.cpus()[0]?.model.trim() ?? 'unknown cpu'} ${Math.round(os.totalmem() / 2 ** 30)} GB`;
+}
 
 export function gitCommit() {
   try {
@@ -49,16 +61,39 @@ export async function startServer({ dist = DIST, port, prefix = PREFIX }) {
 }
 
 /**
+ * The Chrome arguments of every harness launch: precise memory info, and the debugging port (picked by Chrome, bound to 127.0.0.1) only when the
+ * request ledger is on. Nothing here weakens Chrome's sandbox or site isolation (test/bench-launch-args.test.ts).
+ */
+export const launchArgs = ({ watch = true } = {}) => [
+  '--enable-precise-memory-info',
+  ...(watch ? ['--remote-debugging-port=0'] : []),
+];
+
+/**
+ * The options passed to Playwright's launchPersistentContext. `sandbox` true sets chromiumSandbox: Playwright adds Chrome's sandbox-off switch to every
+ * launch unless it is true (probed 20 Nov 2026), so a run that must keep the sandbox (the Windows emulated run) asks for it; the local default stays off so
+ * the committed macOS figures remain comparable with each other.
+ */
+export const launchOptions = ({ headless = true, watch = true, sandbox = false } = {}) => ({
+  channel: 'chrome',
+  headless,
+  serviceWorkers: 'allow',
+  chromiumSandbox: sandbox,
+  args: launchArgs({ watch }),
+});
+
+/**
  * Launches installed Chrome (channel chrome, no download) on the profile, with precise memory info and a debugging port, and attaches the
  * CDP request ledger to every target. `watch` false skips the ledger.
  */
-export async function launch(playwright, { profileDir, headless = true, watch = true }) {
-  const ctx = await playwright.chromium.launchPersistentContext(profileDir, {
-    channel: 'chrome',
-    headless,
-    serviceWorkers: 'allow',
-    args: ['--enable-precise-memory-info', ...(watch ? ['--remote-debugging-port=0'] : [])],
-  });
+export async function launch(
+  playwright,
+  { profileDir, headless = true, watch = true, sandbox = false },
+) {
+  const ctx = await playwright.chromium.launchPersistentContext(
+    profileDir,
+    launchOptions({ headless, watch, sandbox }),
+  );
   const cdp = watch ? await connectCdp(profileDir) : undefined;
   const page = ctx.pages()[0] ?? (await ctx.newPage());
   return {
@@ -99,20 +134,30 @@ export async function chromeVersion(page) {
   });
 }
 
-export async function waitReady(page, base, { timeout = 60000 } = {}) {
-  await page.goto(base);
-  await page.waitForFunction(
-    () => navigator.serviceWorker?.controller?.state === 'activated',
-    null,
-    { timeout },
+/**
+ * `guard` (scripts/lib/fail-fast.mjs, optional): every long wait of the next four functions races with it, so a crash or an out-of-memory ends the wait with
+ * a BenchFailure within seconds instead of at the wait's own timeout.
+ */
+const raced = (guard, promise) => (guard ? guard.race(promise) : promise);
+
+export async function waitReady(page, base, { timeout = 60000, guard } = {}) {
+  await raced(guard, page.goto(base));
+  await raced(
+    guard,
+    page.waitForFunction(() => navigator.serviceWorker?.controller?.state === 'activated', null, {
+      timeout,
+    }),
   );
-  await page.getByTestId('model-status').waitFor({ timeout });
-  await page.waitForFunction(
-    () =>
-      document.querySelector('[data-testid="model-status"]')?.getAttribute('data-status') !==
-      'unknown',
-    null,
-    { timeout },
+  await raced(guard, page.getByTestId('model-status').waitFor({ timeout }));
+  await raced(
+    guard,
+    page.waitForFunction(
+      () =>
+        document.querySelector('[data-testid="model-status"]')?.getAttribute('data-status') !==
+        'unknown',
+      null,
+      { timeout },
+    ),
   );
 }
 
@@ -127,46 +172,55 @@ async function attrIfPresent(page, testId, name) {
 }
 
 /** Online, once: press Download and wait until the model is verified on this device. Returns the model status text. */
-export async function downloadModel(page, { timeout = 15 * 60000 } = {}) {
-  await page.getByTestId('download-model').click();
-  await page.waitForFunction(
-    () => {
-      const s = document.querySelector('[data-testid="model-status"]')?.getAttribute('data-status');
-      return (
-        s === 'cached' ||
-        s === 'ready' ||
-        s === 'refused' ||
-        document.querySelector('[data-testid="model-refusal"]') !== null
-      );
-    },
-    null,
-    { timeout },
+export async function downloadModel(page, { timeout = 15 * 60000, guard } = {}) {
+  await raced(guard, page.getByTestId('download-model').click());
+  await raced(
+    guard,
+    page.waitForFunction(
+      () => {
+        const s = document
+          .querySelector('[data-testid="model-status"]')
+          ?.getAttribute('data-status');
+        return (
+          s === 'cached' ||
+          s === 'ready' ||
+          s === 'refused' ||
+          document.querySelector('[data-testid="model-refusal"]') !== null
+        );
+      },
+      null,
+      { timeout },
+    ),
   );
   const refusal = await textIfPresent(page, 'model-refusal');
   return { status: await page.getByTestId('model-status').getAttribute('data-status'), refusal };
 }
 
 /** Chooses a file and waits for the document card to show a result. */
-export async function openPdf(page, file, { timeout = 5 * 60000 } = {}) {
-  await page.setInputFiles('[data-testid="file-input"]', file);
-  await page.waitForSelector('[data-testid="doc-summary"], [data-testid="doc-refusal"]', {
-    timeout,
-  });
+export async function openPdf(page, file, { timeout = 5 * 60000, guard } = {}) {
+  await raced(guard, page.setInputFiles('[data-testid="file-input"]', file));
+  await raced(
+    guard,
+    page.waitForSelector('[data-testid="doc-summary"], [data-testid="doc-refusal"]', { timeout }),
+  );
   const refusal = await textIfPresent(page, 'doc-refusal');
   const reason = await attrIfPresent(page, 'doc-refusal', 'data-reason');
+  guard?.checkRefusal(reason);
   const summary = await textIfPresent(page, 'doc-summary');
   return { ok: refusal === '', refusal, reason, summary };
 }
 
 /** Types a question, asks, and waits for the answer or a refusal. */
-export async function ask(page, question, { timeout = 10 * 60000 } = {}) {
-  await page.getByTestId('question').fill(question);
-  await page.getByTestId('ask').click();
-  await page.waitForSelector('[data-testid="answer-block"], [data-testid="ask-refusal"]', {
-    timeout,
-  });
+export async function ask(page, question, { timeout = 10 * 60000, guard } = {}) {
+  await raced(guard, page.getByTestId('question').fill(question));
+  await raced(guard, page.getByTestId('ask').click());
+  await raced(
+    guard,
+    page.waitForSelector('[data-testid="answer-block"], [data-testid="ask-refusal"]', { timeout }),
+  );
   const refusal = await textIfPresent(page, 'ask-refusal');
   const reason = await attrIfPresent(page, 'ask-refusal', 'data-reason');
+  guard?.checkRefusal(reason);
   if (refusal)
     return { ok: false, refusal, reason, text: '', sources: [], firstTokenMs: null, totalMs: null };
   const text = await page.getByTestId('answer').innerText();
@@ -387,6 +441,23 @@ export function sampleJsHeap(page, intervalMs = 250) {
 }
 
 export const startRss = (profileDir) => startRssSampler({ userDataDir: profileDir });
+
+/**
+ * For createGuard({ pollOutOfMemory }): true once the app's own event log holds an out_of_memory reason (model.load, model.embed or pipeline.answer, backend
+ * adapter R18). One cheap string search in the page first; the log is parsed only when the word is there.
+ */
+export const outOfMemoryPoll = (page) => () =>
+  page.evaluate(() => {
+    const text = globalThis.__airplanemodeDevtools?.snapshot();
+    if (typeof text !== 'string' || !text.includes('out_of_memory')) return false;
+    try {
+      return JSON.parse(text).events.some((e) =>
+        Object.values(e.attrs ?? {}).includes('out_of_memory'),
+      );
+    } catch {
+      return false;
+    }
+  });
 
 export async function storageUsage(page) {
   return page.evaluate(async () => (await navigator.storage.estimate()).usage ?? null);

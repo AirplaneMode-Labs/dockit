@@ -6,7 +6,7 @@ import { defineConfig } from 'playwright/test';
 // first. They launch their own persistent contexts (Chrome profile folders named chrome-profile-*) so they can restart Chrome on the same profile.
 export default defineConfig({
   testDir: 'test',
-  testMatch: /(e2e|gate)\.spec\.ts$/,
+  testMatch: /(e2e|gate|failfast-crash)\.spec\.ts$/,
   fullyParallel: false,
   workers: 1,
   retries: 0,
