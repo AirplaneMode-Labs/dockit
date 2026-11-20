@@ -1,4 +1,4 @@
-// Vendored from AirplaneMode-Labs/runtime spec/backend-adapter.ts @ 0.4.0; source of truth is runtime/spec; do not edit here
+// Vendored from AirplaneMode-Labs/runtime spec/backend-adapter.ts @ 0.5.0; source of truth is runtime/spec; do not edit here
 /**
  * Backend adapter contract 0.5.0 (see backend-adapter.md for prose).
  *

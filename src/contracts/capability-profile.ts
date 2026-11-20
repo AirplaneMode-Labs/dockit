@@ -1,4 +1,4 @@
-// Vendored from AirplaneMode-Labs/runtime spec/capability-profile.ts @ 0.1.0; source of truth is runtime/spec; do not edit here
+// Vendored from AirplaneMode-Labs/runtime spec/capability-profile.ts @ 0.1.1; source of truth is runtime/spec; do not edit here
 /**
  * Capability profile contract 0.1.1 (airplanemode.capability/0.1).
  *

@@ -9,6 +9,7 @@ import {
   CONTRACT_VERSIONS,
   header,
   parseLanded,
+  readLandedFrom,
   resolveSpecLandedPath,
   sync,
   vendoredBody,
@@ -20,25 +21,42 @@ const contractsDir = join(root, 'src', 'contracts');
 const siblingPresent = existsSync(specDir);
 
 describe('vendored contracts', () => {
-  it('uses the per-file version map for spec release 0.5.0 and vendors six files', () => {
-    // Release 0.5.0 (2026-11-18, untagged): manifest 0.1.2 is "manifest spec v0.1" (published, additive patch); the others are draft.
+  it('uses the per-file version map for spec release 0.6.1 and vendors six files', () => {
+    // Release 0.6.1 (2026-11-20, untagged): every header names its contract's own version. manifest 0.1.4 is "manifest spec v0.1" (published, additive patch:
+    // the Release manifests section); event 0.1.6 and storage API 0.4.1 are draft patches; the other three are the contract versions of 0.6.0, unchanged.
     expect(CONTRACT_VERSIONS).toEqual({
-      'manifest.ts': '0.1.2',
-      'capability-profile.ts': '0.1.0',
-      'event.ts': '0.1.4',
-      'storage-api.ts': '0.3.0',
-      'backend-adapter.ts': '0.4.0',
+      'manifest.ts': '0.1.4',
+      'capability-profile.ts': '0.1.1',
+      'event.ts': '0.1.6',
+      'storage-api.ts': '0.4.1',
+      'backend-adapter.ts': '0.5.0',
       'model-descriptor.ts': '0.2.1',
     });
     expect(CONTRACT_FILES).toHaveLength(6);
     expect(header('event.ts')).toBe(
-      '// Vendored from AirplaneMode-Labs/runtime spec/event.ts @ 0.1.4; source of truth is runtime/spec; do not edit here\n',
+      '// Vendored from AirplaneMode-Labs/runtime spec/event.ts @ 0.1.6; source of truth is runtime/spec; do not edit here\n',
     );
-    expect(header('manifest.ts')).toContain('@ 0.1.2;');
-    expect(header('storage-api.ts')).toContain('@ 0.3.0;');
-    expect(header('backend-adapter.ts')).toContain('@ 0.4.0;');
+    expect(header('manifest.ts')).toContain('@ 0.1.4;');
+    expect(header('capability-profile.ts')).toContain('@ 0.1.1;');
+    expect(header('storage-api.ts')).toContain('@ 0.4.1;');
+    expect(header('backend-adapter.ts')).toContain('@ 0.5.0;');
     expect(header('model-descriptor.ts')).toContain('@ 0.2.1;');
     expect(() => header('unknown.ts')).toThrow(/no version/);
+  });
+
+  it('each vendored body states the contract version its header names (the header cannot drift from the file again)', () => {
+    const named: Record<string, RegExp> = {
+      'manifest.ts': /Manifest contract 0\.1\.4\b/u,
+      'capability-profile.ts': /Capability profile contract 0\.1\.1\b/u,
+      'event.ts': /Event contract 0\.1\.6\b/u,
+      'storage-api.ts': /Storage API contract 0\.4\.1\b/u,
+      'backend-adapter.ts': /Backend adapter contract 0\.5\.0\b/u,
+      'model-descriptor.ts': /Model descriptor contract 0\.2\.1\b/u,
+    };
+    for (const file of CONTRACT_FILES)
+      expect(readFileSync(join(contractsDir, file), 'utf8').slice(0, 600), file).toMatch(
+        named[file]!,
+      );
   });
 
   it('every vendored file starts with the vendoring header', () => {
@@ -200,6 +218,140 @@ describe('sha256 check against SPEC-LANDED.txt (D5-01)', () => {
     expect(results.every((r) => r.status === 'sha-mismatch' || r.status === 'sha-missing')).toBe(
       true,
     );
+  });
+});
+
+describe('a stale header is drift too (Sprint 7: capability-profile.ts said @ 0.1.0 over a 0.1.1 body)', () => {
+  function pair() {
+    const dir = mkdtempSync(join(tmpdir(), 'dockit-hdr-'));
+    const spec = join(dir, 'spec');
+    const out = join(dir, 'contracts');
+    mkdirSync(spec);
+    mkdirSync(out);
+    for (const f of CONTRACT_FILES) {
+      writeFileSync(join(spec, f), `export type same = 1;\n`);
+      writeFileSync(join(out, f), header(f) + `export type same = 1;\n`);
+    }
+    return { spec, out };
+  }
+  it('is in sync when body and header are both right', () => {
+    const { spec, out } = pair();
+    expect(
+      sync({ specDir: spec, outDir: out, write: false }).every((r) => r.status === 'in-sync'),
+    ).toBe(true);
+  });
+  it('a body that matches under an older header is drift on --check and is rewritten otherwise', () => {
+    const { spec, out } = pair();
+    writeFileSync(
+      join(out, 'capability-profile.ts'),
+      '// Vendored from AirplaneMode-Labs/runtime spec/capability-profile.ts @ 0.1.0; source of truth is runtime/spec; do not edit here\nexport type same = 1;\n',
+    );
+    expect(
+      sync({ specDir: spec, outDir: out, write: false }).find(
+        (r) => r.file === 'capability-profile.ts',
+      )?.status,
+    ).toBe('drift');
+    expect(
+      sync({ specDir: spec, outDir: out, write: true }).find(
+        (r) => r.file === 'capability-profile.ts',
+      )?.status,
+    ).toBe('updated');
+    expect(readFileSync(join(out, 'capability-profile.ts'), 'utf8')).toBe(
+      header('capability-profile.ts') + 'export type same = 1;\n',
+    );
+  });
+});
+
+// Sprint 7: D1's SPEC-LANDED.txt is prose and the digests are in LANDED.json next to it ({ files: { 'spec/<file>': sha256 } }). The reader takes the sha lines when
+// there are any and the JSON beside the file when there are none; neither is ever guessed.
+describe('LANDED.json beside SPEC-LANDED.txt (Sprint 7)', () => {
+  const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+  const dirWith = (landedTxt: string, json?: unknown) => {
+    const dir = mkdtempSync(join(tmpdir(), 'dockit-landed-'));
+    writeFileSync(join(dir, 'SPEC-LANDED.txt'), landedTxt);
+    if (json !== undefined) writeFileSync(join(dir, 'LANDED.json'), JSON.stringify(json));
+    return dir;
+  };
+
+  it('a prose SPEC-LANDED.txt with a LANDED.json beside it gives the digests of the json, keyed by basename', () => {
+    const dir = dirWith('SPEC RELEASE 0.6.1 LANDED\n(no digest lines)\n', {
+      specRelease: '0.6.1',
+      files: {
+        'spec/manifest.ts': 'a'.repeat(64),
+        'spec/examples/event.example.json': 'b'.repeat(64),
+      },
+    });
+    const m = readLandedFrom(join(dir, 'SPEC-LANDED.txt'));
+    expect(m.get('manifest.ts')).toBe('a'.repeat(64));
+    expect(m.get('event.example.json')).toBe('b'.repeat(64));
+    expect(m.size).toBe(2);
+  });
+
+  it('digest lines in SPEC-LANDED.txt win over a LANDED.json (the older format keeps working)', () => {
+    const dir = dirWith(`${'c'.repeat(64)}  spec/manifest.ts\n`, {
+      files: { 'spec/manifest.ts': 'd'.repeat(64) },
+    });
+    expect(readLandedFrom(join(dir, 'SPEC-LANDED.txt')).get('manifest.ts')).toBe('c'.repeat(64));
+  });
+
+  it('without digest lines and without a LANDED.json the map is empty, so every file is sha-missing and nothing is written', () => {
+    const dir = dirWith('prose only\n');
+    const landed = readLandedFrom(join(dir, 'SPEC-LANDED.txt'));
+    expect(landed.size).toBe(0);
+    const spec = join(dir, 'spec');
+    const out = join(dir, 'contracts');
+    mkdirSync(spec);
+    mkdirSync(out);
+    for (const f of CONTRACT_FILES) writeFileSync(join(spec, f), `export type x = 1;\n`);
+    const results = sync({ specDir: spec, outDir: out, write: true, landed });
+    expect(results.every((r) => r.status === 'sha-missing' || r.status === 'blocked')).toBe(true);
+    for (const f of CONTRACT_FILES) expect(existsSync(join(out, f))).toBe(false);
+  });
+
+  it('a LANDED.json that is not valid or has no files object is an error, never an empty pass', () => {
+    const bad = mkdtempSync(join(tmpdir(), 'dockit-landed-'));
+    writeFileSync(join(bad, 'SPEC-LANDED.txt'), 'prose\n');
+    writeFileSync(join(bad, 'LANDED.json'), '{ not json');
+    expect(() => readLandedFrom(join(bad, 'SPEC-LANDED.txt'))).toThrow(/LANDED\.json/u);
+    const noFiles = dirWith('prose\n', { specRelease: '0.6.1' });
+    expect(() => readLandedFrom(join(noFiles, 'SPEC-LANDED.txt'))).toThrow(/files/u);
+    const badDigest = dirWith('prose\n', { files: { 'spec/manifest.ts': 'nope' } });
+    expect(() => readLandedFrom(join(badDigest, 'SPEC-LANDED.txt'))).toThrow(/sha256/u);
+  });
+
+  it('a sync with the json digests writes the files, and a flipped digest blocks all of them', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dockit-landed-'));
+    const spec = join(dir, 'spec');
+    const out = join(dir, 'contracts');
+    mkdirSync(spec);
+    mkdirSync(out);
+    const files: Record<string, string> = {};
+    for (const f of CONTRACT_FILES) {
+      const body = `export type ${f.replace(/\W/g, '_')} = 'v4';\n`;
+      writeFileSync(join(spec, f), body);
+      files[`spec/${f}`] = sha(body);
+    }
+    writeFileSync(join(dir, 'SPEC-LANDED.txt'), 'prose\n');
+    writeFileSync(join(dir, 'LANDED.json'), JSON.stringify({ files }));
+    const ok = sync({
+      specDir: spec,
+      outDir: out,
+      write: true,
+      landed: readLandedFrom(join(dir, 'SPEC-LANDED.txt')),
+    });
+    expect(ok.map((r) => r.status)).toEqual(CONTRACT_FILES.map(() => 'updated'));
+    writeFileSync(
+      join(dir, 'LANDED.json'),
+      JSON.stringify({ files: { ...files, 'spec/event.ts': '0'.repeat(64) } }),
+    );
+    const bad = sync({
+      specDir: spec,
+      outDir: out,
+      write: true,
+      landed: readLandedFrom(join(dir, 'SPEC-LANDED.txt')),
+    });
+    expect(bad.find((r) => r.file === 'event.ts')?.status).toBe('sha-mismatch');
+    expect(bad.some((r) => r.status === 'updated')).toBe(false);
   });
 });
 

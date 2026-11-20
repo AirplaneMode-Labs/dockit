@@ -16,14 +16,15 @@ export const DEFAULT_SPEC_DIR = join(root, '..', 'runtime', 'spec');
 // <workspace>/evidence/sprint-<n>/D1/SPEC-LANDED.txt that exists (the committed copy). No scratch path is baked in.
 export const DEFAULT_OUT_DIR = join(root, 'src', 'contracts');
 
-// Each contract carries its own version (spec release 0.5.0, 2026-11-18, untagged): the header names that
-// contract's version, not the release's. Manifest 0.1.2 is "manifest spec v0.1" (published, additive patch); the rest are draft.
+// Each contract carries its own version (spec release 0.6.1, 2026-11-20, untagged): the header names that contract's version, not the release's.
+// Manifest 0.1.4 is "manifest spec v0.1" (published, an additive patch: the Release manifests section); event 0.1.6 and storage API 0.4.1 are draft
+// patches; the capability profile, backend adapter and model descriptor keep the versions they had in 0.6.0.
 export const CONTRACT_VERSIONS = {
-  'manifest.ts': '0.1.2',
-  'capability-profile.ts': '0.1.0',
-  'event.ts': '0.1.4',
-  'storage-api.ts': '0.3.0',
-  'backend-adapter.ts': '0.4.0',
+  'manifest.ts': '0.1.4',
+  'capability-profile.ts': '0.1.1',
+  'event.ts': '0.1.6',
+  'storage-api.ts': '0.4.1',
+  'backend-adapter.ts': '0.5.0',
   'model-descriptor.ts': '0.2.1',
 };
 export const CONTRACT_FILES = Object.keys(CONTRACT_VERSIONS);
@@ -37,6 +38,38 @@ export function vendoredBody(text) {
   // Strip the single-line vendoring header so the remainder can be diffed against the source.
   const nl = text.indexOf('\n');
   return text.startsWith('// Vendored from ') && nl !== -1 ? text.slice(nl + 1) : text;
+}
+
+/**
+ * The digest map for a SPEC-LANDED.txt: its `sha256  path` lines when it has any, else the `files` object of the LANDED.json beside it (D1 writes both
+ * since Sprint 7: the .txt is prose, the .json holds { files: { 'spec/<file>': sha256 } }). A missing LANDED.json gives an empty map (every file is then
+ * sha-missing and nothing is written); one that is not valid JSON, has no files object or holds a digest that is not 64 lower-case hex is an error.
+ */
+export function readLandedFrom(landedTxtPath) {
+  const fromLines = parseLanded(readFileSync(landedTxtPath, 'utf8'));
+  if (fromLines.size > 0) return fromLines;
+  const json = join(dirname(landedTxtPath), 'LANDED.json');
+  if (!existsSync(json)) return fromLines;
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(json, 'utf8'));
+  } catch (e) {
+    throw new Error(`${json}: LANDED.json is not valid JSON (${e.message})`);
+  }
+  if (
+    parsed === null ||
+    typeof parsed !== 'object' ||
+    parsed.files === null ||
+    typeof parsed.files !== 'object'
+  )
+    throw new Error(`${json}: LANDED.json has no files object`);
+  const map = new Map();
+  for (const [path, digest] of Object.entries(parsed.files)) {
+    if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/u.test(digest))
+      throw new Error(`${json}: the sha256 of ${path} is not 64 lower-case hex characters`);
+    map.set(path.split('/').pop(), digest);
+  }
+  return map;
 }
 
 /** Parses `shasum -a 256` style lines into Map<basename, sha256>; other lines are ignored. */
@@ -136,7 +169,8 @@ export function sync({
     }
     const src = readFileSync(source, 'utf8');
     const current = existsSync(target) ? readFileSync(target, 'utf8') : '';
-    const inSync = vendoredBody(current) === src;
+    // the body AND the header: a body that matches under a header naming an older contract version is drift too
+    const inSync = current === header(file) + src;
     if (!inSync && write) writeFileSync(target, header(file) + src);
     results.push({ file, target, status: inSync ? 'in-sync' : write ? 'updated' : 'drift' });
   }
@@ -157,7 +191,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exit(1);
   }
   console.log(`sync-contracts: SPEC-LANDED.txt from ${located.via}: ${located.path}`);
-  const landed = parseLanded(readFileSync(located.path, 'utf8'));
+  const landed = readLandedFrom(located.path);
   const results = sync({ write: !check, landed });
   for (const r of results) console.log(`${r.status}\t${r.target}`);
   const bad = new Set(['drift', 'sha-mismatch', 'sha-missing', 'source-missing', 'blocked']);
