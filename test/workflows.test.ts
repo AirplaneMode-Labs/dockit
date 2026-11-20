@@ -531,7 +531,7 @@ describe('bench-windows.yml: the checksum check line runs for real', () => {
   );
 });
 
-// The pwsh steps of the workflow have never run on Windows either. PowerShell's own parser (pwsh is preinstalled on every GitHub runner and on the developer's Mac) reads each
+// The pwsh steps of the workflow were written before they had run on Windows (they have since, three dispatches). PowerShell's own parser (pwsh is preinstalled on every GitHub runner and on the developer's Mac) reads each
 // of them; where there is no pwsh the test is skipped. A parse is not a run, but it catches the quoting and syntax mistakes that would end a leg at once.
 describe('bench-windows.yml: every pwsh step parses', () => {
   const text = wf('bench-windows.yml');

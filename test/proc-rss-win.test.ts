@@ -2,9 +2,9 @@ import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import * as rss from '../scripts/lib/proc-rss.mjs';
 
-// B6: the Windows sampler has never run on Windows. These tests pin what is known before the first run: the shape of the Get-CimInstance JSON
+// B6: these tests were written before the Windows sampler had run on Windows (it has since run on the emulated, GitHub-hosted VM of the bench-windows workflow, never on a laptop). They pin the shape of the Get-CimInstance JSON
 // (recorded by hand from the documented property names), the commit figure (PrivatePageCount, bytes) next to the working set, UTF-8 output, null
-// command lines, and the sampler's own tick count and median interval. What only the first run can prove is listed in dockit/scripts/win/README.md.
+// command lines, and the sampler's own tick count and median interval. What the runs showed and did not show is in dockit/scripts/win/README.md.
 
 const DIR = 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\chrome-profile-abc123';
 const CHROME = '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"';

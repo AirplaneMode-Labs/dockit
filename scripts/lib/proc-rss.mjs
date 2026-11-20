@@ -3,8 +3,8 @@
 //   macOS and Linux  `ps -A -o pid=,ppid=,rss=,command=` every 250 ms (rss in KiB; shared pages are counted in every process that maps them)
 //   Windows          ONE long-running Windows PowerShell 5.1 child that prints the Win32_Process list as one JSON line every 500 ms
 //                    (WorkingSetSize and PrivatePageCount, in bytes: the working set and the commit size, which are different figures, TD-49). Its
-//                    output is UTF-8 without a byte-order mark. It has never run on Windows: the first run of the bench-windows workflow or the
-//                    owner's runbook run is the first. Task Manager (Details, chrome.exe, memory columns) is the cross-check. The sampler also
+//                    output is UTF-8 without a byte-order mark. It has run on a GitHub-hosted Windows Server VM (the bench-windows workflow, three
+//                    dispatches) and never on a Windows laptop: the owner's runbook run is the first there. Task Manager (Details, chrome.exe, memory columns) is the cross-check. The sampler also
 //                    reports how many ticks it got and the median time between them, because enumerating every process each tick can take longer
 //                    than the 500 ms it sleeps, and short peaks between ticks are missed.
 import { spawn, execFile } from 'node:child_process';

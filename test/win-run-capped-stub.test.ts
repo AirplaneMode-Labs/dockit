@@ -557,11 +557,21 @@ describe.skipIf(!run)(
           completedRuns: 0,
           rowsWritten: 0,
         });
+        // the control wrote no row, so the merge step leaves ONE marker row (run 0, no figure, no failure reason) built from the summary's own label and evidence
         const m = mergeCli(r);
         expect({ status: m.status, stderr: m.stderr }).toEqual({ status: 0, stderr: '' });
-        expect(m.stdout).toContain(
-          'no CSV for the 2GiB leg (a control leg that wrote no row); nothing to fill',
-        );
+        expect(m.stdout).toContain('wrote a marker row for the 2GiB control leg');
+        const marker = parseCsv(readFileSync(join(r.outDir, 'e2e-emulated-win-vm.csv'), 'utf8'));
+        expect(marker).toHaveLength(1);
+        expect(marker[0]).toMatchObject({
+          run: '0',
+          failure_reason: '',
+          control_leg: 'true',
+          environment: r.summary!['label'],
+          limit_probe_refused: 'true',
+          laptop_8gb: 'not measured on 8 GB',
+        });
+        expect(limitProof(marker[0]!)).toBe('proven');
       },
     );
   },

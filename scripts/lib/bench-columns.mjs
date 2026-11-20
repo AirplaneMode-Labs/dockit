@@ -120,11 +120,12 @@ export const E2E_EMULATED_COLUMNS_V1 = [
 ];
 
 /**
- * The columns of a Windows emulated run's runs file. job_* figures and the six limit-evidence columns after failure_reason are filled from job-summary.json by
- * scripts/bench-emulated-merge.mjs; bench-e2e writes them empty. An empty evidence cell means 'not read back / not probed' (a run before the evidence existed, or
- * a leg with nothing to probe), never 'passed'.
+ * The columns of the runs file the first limit-evidence dispatch wrote (bench-windows run 44666921454, dockit f6a71ca): V1 plus the six limit-evidence columns after
+ * failure_reason, filled from job-summary.json by scripts/bench-emulated-merge.mjs (bench-e2e writes them empty). An empty evidence cell means 'not read back / not probed'
+ * (a run before the evidence existed, or a leg with nothing to probe), never 'passed'. A dispatch of that commit wrote this header; nothing writes it any more, the merge step
+ * accepts it as input and upgrades it, and no committed file has it.
  */
-export const E2E_EMULATED_COLUMNS = [
+export const E2E_EMULATED_COLUMNS_V2 = [
   ...E2E_EMULATED_COLUMNS_V1,
   'job_limit_readback_bytes', // JobMemoryLimit as QueryInformationJobObject reports it after the process was assigned; 0 on the leg with no limit
   'job_limit_flags_readback', // LimitFlags as reported, '0x2200' (job memory and kill on close) or '0x2000' (kill on close only)
@@ -134,7 +135,15 @@ export const E2E_EMULATED_COLUMNS = [
   'control_leg', // 'true' on the control leg (a limit the benchmark must not complete under), 'false' on the others; empty before the field existed
 ];
 
-/** The two headers a committed emulated runs CSV may have: the current one and the one written before the limit evidence existed. */
+/**
+ * The columns of a Windows emulated run's runs file: V2 plus the probe's own share of job_memory_limit_messages. The probe commits the limit plus 256 MiB from inside the job
+ * and the system posts one message for that refused commit, so the whole-run count says nothing about the benchmark until the probe's message is taken out of it:
+ * probe_memory_limit_messages is the count the completion port had when the probe ended (job-summary.json probe.jobMemoryLimitMessagesAfterProbe), and limitMessages() gives the
+ * messages posted while the benchmark ran as the difference. Empty when there was no probe (the leg with no limit) or no port.
+ */
+export const E2E_EMULATED_COLUMNS = [...E2E_EMULATED_COLUMNS_V2, 'probe_memory_limit_messages'];
+
+/** The two headers a committed emulated runs CSV may have: the current one and the one written before the limit evidence existed (V2 is only ever a dispatch's output). */
 export const EMULATED_HEADERS = Object.freeze([
   E2E_EMULATED_COLUMNS.join(','),
   E2E_EMULATED_COLUMNS_V1.join(','),
@@ -194,6 +203,40 @@ export const LIMIT_PROOF_TEXT = Object.freeze({
   unproven: 'limit unproven',
 });
 
+const messageCount = (v) => {
+  const s = v === undefined || v === null ? '' : String(v);
+  if (s === '') return null;
+  if (!COUNT_CELL.test(s))
+    throw new Error(`a message count must be empty or a non-negative integer, not '${s}'`);
+  return Number(s);
+};
+
+/**
+ * The job's JOB_OBJECT_MSG_JOB_MEMORY_LIMIT messages of ONE leg (from one of its rows, which all carry the same cells), the probe's own told from the ones posted while the
+ * benchmark ran:
+ *   total      messages over the whole run (job_memory_limit_messages); null when no completion port was attached
+ *   probe      messages the probe's own refused commit produced (probe_memory_limit_messages); null when there was no probe or the count was not recorded
+ *   benchmark  total - probe: messages posted while the benchmark ran; null when the total or the probe's share is not known. A leg with no limit has no probe, so there every
+ *              message is the benchmark's.
+ * A message is the system's notice that a process in the job asked for a commit past the limit and was refused. The system does not guarantee delivery of these notices, so
+ * `benchmark` is a floor on the refusals, and a count of 0 is what the port saw, not a proof. A probe count above the total is a contradiction (the port counts upwards) and throws.
+ * A copy of this function is in site/scripts/import-dockit-emulated.mjs (test:siblings compares them on a table of rows).
+ */
+export function limitMessages(row) {
+  const total = messageCount(row.job_memory_limit_messages);
+  const probe = messageCount(row.probe_memory_limit_messages);
+  const uncapped = (row.job_commit_limit_bytes ?? '') === '';
+  if (total !== null && probe !== null && probe > total)
+    throw new Error(
+      `probe_memory_limit_messages (${probe}) is above job_memory_limit_messages (${total})`,
+    );
+  return {
+    total,
+    probe,
+    benchmark: total === null ? null : uncapped ? total : probe === null ? null : total - probe,
+  };
+}
+
 /**
  * BUG-T1-S7-06 (documented zero-row rule): an emulated run that fails before its first run completes (the model download, waitReady, the reload) still
  * leaves a trace. The runs CSV gets ONE row with run 0, restart false, every figure empty, answer_ok false, failure_reason set and the environment label
@@ -228,6 +271,7 @@ export function runZeroRows({ date, label, commit, reason, loadStart = '', loadE
     job_peak_after_probe_bytes: '',
     job_memory_limit_messages: '',
     control_leg: '',
+    probe_memory_limit_messages: '',
   };
   const q = { ...base, qid: '', environment: label, failure_reason: reason };
   return { e2e, q };
@@ -319,9 +363,18 @@ export const csv = (cols, rows) => {
         'job_limit_readback_bytes',
         'job_peak_after_probe_bytes',
         'job_memory_limit_messages',
+        'probe_memory_limit_messages',
       ])
         if (String(r[c] ?? '') !== '' && !COUNT_CELL.test(String(r[c])))
           throw new Error(bad(c, 'empty or a non-negative integer'));
+      if (
+        String(r.probe_memory_limit_messages ?? '') !== '' &&
+        String(r.job_memory_limit_messages ?? '') !== '' &&
+        Number(r.probe_memory_limit_messages) > Number(r.job_memory_limit_messages)
+      )
+        throw new Error(
+          `row ${i + 1}: probe_memory_limit_messages must not be above job_memory_limit_messages`,
+        );
     });
   }
   return `${cols.join(',')}\n${rows.map((r) => cols.map((c) => cell(r[c])).join(',')).join('\n')}\n`;

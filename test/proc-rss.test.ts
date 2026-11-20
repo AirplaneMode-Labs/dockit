@@ -73,7 +73,7 @@ describe('proc-rss: macOS ps parser', () => {
   });
 });
 
-describe('proc-rss: Windows Get-CimInstance parser (never run on Windows: this is a recorded shape, the owner runs it first)', () => {
+describe('proc-rss: Windows Get-CimInstance parser (a recorded shape; it has since run on the emulated Windows VM, never on a laptop)', () => {
   it('parses ProcessId, ParentProcessId, WorkingSetSize (bytes) and CommandLine, null command lines included', () => {
     const p = rss.parseWin(WIN);
     expect(p).toHaveLength(6);

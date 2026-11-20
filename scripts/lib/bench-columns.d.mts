@@ -21,9 +21,11 @@ export const FAILURE_REASONS: readonly [
 export const ENVIRONMENT_LABEL_RE: RegExp;
 export function validateEnvironmentLabel(label: string): string;
 export const E2E_EMULATED_COLUMNS: readonly string[];
-/** The header of the emulated runs CSV before the limit evidence existed (the first committed run still has it). */
+/** The header of the emulated runs CSV before the limit evidence existed (the first run, kept under docs/benchmarks/history/, has it). */
 export const E2E_EMULATED_COLUMNS_V1: readonly string[];
-/** The two headers a committed emulated runs CSV may have, as comma-joined lines: the current one and the first. */
+/** The header the first limit-evidence dispatch wrote (V1 plus six evidence columns); the merge step accepts it as input and upgrades it. */
+export const E2E_EMULATED_COLUMNS_V2: readonly string[];
+/** The two headers a committed emulated runs CSV may have, as comma-joined lines: the current one and the first (V2 is only ever a dispatch's output). */
 export const EMULATED_HEADERS: readonly string[];
 /** The legs and the job commit limit of each in bytes (null: none). */
 export const LEG_CAPS: Readonly<Record<string, number | null>>;
@@ -36,6 +38,12 @@ export type LimitProof = 'no_limit' | 'proven' | 'not_enforced' | 'readback_mism
 /** What one leg's evidence cells say about its commit limit; 'proven' needs the read-back equal AND the probe refused. */
 export function limitProof(row: Record<string, string | undefined>): LimitProof;
 export const LIMIT_PROOF_TEXT: Readonly<Record<LimitProof, string>>;
+/** The job's memory-limit messages of one leg: the whole run, the probe's own, and (the difference) those posted while the benchmark ran; null where not known. */
+export function limitMessages(row: Record<string, string | undefined>): {
+  total: number | null;
+  probe: number | null;
+  benchmark: number | null;
+};
 export const Q_EMULATED_COLUMNS: readonly string[];
 
 export const MACHINE_8GB_OR_LAPTOP_RE: RegExp;

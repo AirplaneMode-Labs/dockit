@@ -524,22 +524,46 @@ describe('scripts/win/README.md says what the script does', () => {
     expect(readme).toContain('0x2000');
     expect(readme).toContain('144');
   });
-  it('says the job holds pwsh, node and Chrome, records the one run and that the limit is unproven, and that no 8 GB cell is filled', () => {
+  it('says the job holds pwsh, node and Chrome, records the three dispatches, says the limit is proven in force and the anomaly settled, and that no 8 GB cell is filled', () => {
+    const flat = readme.replace(/\s+/g, ' ');
     expect(readme).toContain('pwsh, node and Chrome process tree');
-    expect(readme).toContain('run 44656249868');
-    expect(readme).toMatch(/the memory limit is unproven/u);
-    expect(readme).toMatch(/The first run's summaries have no `readBack`/u);
-    expect(readme).toMatch(/has not run on Windows/u);
+    for (const id of ['44651054609', '44656249868', '44666921454'])
+      expect(readme, id).toContain(`| ${id} |`);
+    expect(flat).toContain(
+      'the memory limit is proven in force on every capped leg, and the anomaly the second dispatch left is settled',
+    );
+    expect(flat).toContain(
+      '**Why the third run replaces the second in the live files and is not appended to them.**',
+    );
+    expect(flat).toContain('`docs/benchmarks/history/`');
+    expect(flat).toContain('`docs/benchmarks/emulated-win-vm-run-44666921454/`');
+    expect(flat).toContain('explanation 2 is the one');
+    expect(flat).toContain(
+      '**a whole-tree peak above a limit does not mean the limit was exceeded**',
+    );
+    expect(flat).toContain('**the limit is proven in force on the 8, 6, 5 and 2 GiB legs**');
+    expect(flat).toContain(
+      'Explanation 1 of the second dispatch (the limit was not in effect) is excluded.',
+    );
+    expect(flat).toContain(
+      'On the 5 GiB leg it is **2**: commits were refused while the benchmark ran',
+    );
+    expect(flat).toContain('On the **8 and 6 GiB legs the count is 0**');
+    expect(flat).toContain('### The 2 GiB control passed');
+    expect(flat).toContain('`control.verdict` is `control_passed`');
+    expect(flat).toContain('### No claim about speed under a cap');
+    expect(flat).toContain('It is not a laptop and not an 8 GB figure');
+    expect(flat).toContain("Sprint 5's 8 GB done-when stays NOT met (owner runbook step 5)");
     expect(readme).not.toMatch(
-      /has never run|None of this has run|What only the first run can prove/u,
+      /the memory limit is unproven|has never run|None of this has run|What only the first run can prove|not yet run on Windows|has not run on Windows/u,
     );
     expect(readme).toMatch(/not measured on 8 GB/u);
     expect(readme).toMatch(/done-when\s+stays NOT met/u);
     expect(readme).toMatch(/is \*\*not built\*\*/u);
   });
-  it('describes the change that settles the limit as written and tested with kernel32 stubbed, not yet run on Windows: read-back, peak on every tick, probe, 2 GiB control, completion port', () => {
+  it('describes the change that settled the limit as written and tested with kernel32 stubbed and then run on Windows: read-back, peak on every tick, probe, 2 GiB control, completion port, and what each outcome of the dispatch was', () => {
     expect(readme).toMatch(
-      /The change that settles it \(written and tested with kernel32 stubbed; not yet run on Windows\)/u,
+      /The change that settled it \(written and tested with kernel32 stubbed, then run on Windows in run 44666921454\)/u,
     );
     expect(readme).toMatch(/\*\*Read the limit back\.\*\*/u);
     expect(readme).toMatch(/\*\*Log `PeakJobMemoryUsed` on every 2-second tick\*\*/u);
@@ -551,7 +575,7 @@ describe('scripts/win/README.md says what the script does', () => {
     // what the stub cannot show is said, and so is the answer to explanation 2
     expect(readme).toMatch(/They do not show what the real kernel answers/u);
     expect(readme).toMatch(/that is the answer to explanation 2/u);
-    // the table of outcomes names every distinct result
+    // the table of outcomes names every distinct result, and says which one happened
     for (const k of [
       'readBack.equal',
       'limitNotEnforced',
@@ -559,6 +583,7 @@ describe('scripts/win/README.md says what the script does', () => {
       'Control exit 7',
       'Control exit 8',
       'firstJobMemoryLimitPid',
+      'What run 44666921454 recorded',
     ])
       expect(readme, k).toContain(k);
     for (const k of [
@@ -570,6 +595,7 @@ describe('scripts/win/README.md says what the script does', () => {
       expect(readme, k).toContain(k);
     expect(readme).toContain('limit proven in force (probe refused, read-back equal)');
     expect(readme).not.toMatch(/\(not made: it needs a Windows run to test\)/u);
+    expect(readme).not.toMatch(/Until a dispatch with this change has run/u);
   });
   it('documents the exit codes, the probe sizes and the empty whole-tree peak the same way the script does', () => {
     expect(readme).toMatch(/exits 124 when it had to stop the benchmark/u);
@@ -582,18 +608,43 @@ describe('scripts/win/README.md says what the script does', () => {
     expect(code).toContain('$ProbeOverBytes = [uint64]268435456');
     expect(readme).toMatch(/12 on the control leg, below its 20/u);
   });
-  it('quotes the committed figures of the first run, byte for byte: the whole-tree peak of every leg, and the 5GiB leg above its own limit', () => {
-    const rows = parseCsv(
-      readFileSync(join(root, 'docs', 'benchmarks', 'e2e-emulated-win-vm.csv'), 'utf8'),
-    );
+  it('quotes the committed figures of both runs, byte for byte: the second run (history) whole-tree peaks and its 5 GiB leg above its own limit, the third run probe peaks and message counts', () => {
     const fmt = (n: number) => n.toLocaleString('en-US');
+    const history = parseCsv(
+      readFileSync(
+        join(root, 'docs', 'benchmarks', 'history', 'e2e-emulated-win-vm-run-44656249868.csv'),
+        'utf8',
+      ),
+    );
     const peaks = new Map(
-      rows.map((r) => [r.job_commit_limit_bytes!, Number(r.job_commit_peak_bytes)]),
+      history.map((r) => [r.job_commit_limit_bytes!, Number(r.job_commit_peak_bytes)]),
     );
     expect([...peaks.keys()]).toEqual(['', '8589934592', '6442450944', '5368709120']);
     for (const p of peaks.values()) expect(readme).toContain(fmt(p));
     const five = peaks.get('5368709120')!;
     expect(five).toBeGreaterThan(5368709120);
     expect(readme).toContain(`**${fmt(five)} bytes, ${fmt(five - 5368709120)} bytes`);
+    // the third run: every number the README quotes is in a committed job-summary.json
+    const dir = join(root, 'docs', 'benchmarks', 'emulated-win-vm-run-44666921454');
+    for (const cap of ['8GiB', '6GiB', '5GiB', '2GiB']) {
+      const sum = JSON.parse(readFileSync(join(dir, cap, 'job-summary.json'), 'utf8'));
+      for (const n of [
+        sum.limitBytes,
+        sum.probe.peakBeforeBytes,
+        sum.probe.peakAfterSmallCommitBytes,
+        sum.probe.peakAfterBytes,
+      ])
+        expect(readme, `${cap} ${n}`).toContain(fmt(n));
+      expect(sum.probe.lastError).toBe(1455);
+      expect(sum.probe.refused).toBe(true);
+      const held = sum.probe.peakAfterBytes - sum.limitBytes - sum.probe.overLimitBytes;
+      expect(readme, `${cap} held ${held}`).toContain(fmt(held));
+    }
+    const none = JSON.parse(readFileSync(join(dir, 'none', 'job-summary.json'), 'utf8'));
+    expect(readme).toContain(fmt(none.peakJobMemoryBytes));
+    const five3 = JSON.parse(readFileSync(join(dir, '5GiB', 'job-summary.json'), 'utf8'));
+    expect(readme).toContain(fmt(five3.peakJobMemoryBytes));
+    expect(five3.completionPort.jobMemoryLimitMessages).toBe(3);
+    expect(five3.probe.jobMemoryLimitMessagesAfterProbe).toBe(1);
   });
 });

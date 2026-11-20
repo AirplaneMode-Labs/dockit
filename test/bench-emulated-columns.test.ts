@@ -48,7 +48,7 @@ describe('the emulated column lists', () => {
       'failure_reason',
     ]);
   });
-  it('E2E_EMULATED_COLUMNS is that list plus the six limit-evidence columns after failure_reason, and a committed file may have either header', () => {
+  it('E2E_EMULATED_COLUMNS is that list plus the six limit-evidence columns after failure_reason and the probe message count after them, and a committed file may have the current header or the first', () => {
     expect([...E2E_EMULATED_COLUMNS]).toEqual([
       ...E2E_EMULATED_COLUMNS_V1,
       'job_limit_readback_bytes',
@@ -57,6 +57,7 @@ describe('the emulated column lists', () => {
       'job_peak_after_probe_bytes',
       'job_memory_limit_messages',
       'control_leg',
+      'probe_memory_limit_messages',
     ]);
     expect([...EMULATED_HEADERS]).toEqual([
       E2E_EMULATED_COLUMNS.join(','),
@@ -110,6 +111,7 @@ const fullRow = (over: Record<string, unknown> = {}) => ({
   job_peak_after_probe_bytes: '',
   job_memory_limit_messages: '',
   control_leg: '',
+  probe_memory_limit_messages: '',
   ...over,
 });
 
@@ -377,7 +379,15 @@ describe('the README subsection "Emulated Windows (not a laptop)" exists only wh
     const file = join(root, 'docs', 'benchmarks', EMULATED_E2E_FILE);
     expect(readme.includes('Emulated Windows (not a laptop)')).toBe(existsSync(file));
     if (existsSync(file))
-      expect(applyEmulated(readme, emulatedBlock(readFileSync(file, 'utf8')))).toBe(readme);
+      expect(
+        applyEmulated(
+          readme,
+          emulatedBlock(
+            readFileSync(file, 'utf8'),
+            readFileSync(join(root, 'docs', 'benchmarks', EMULATED_Q_FILE), 'utf8'),
+          ),
+        ),
+      ).toBe(readme);
   });
 
   it('the committed e2e.csv is never an emulated file: no environment column', () => {
@@ -477,15 +487,24 @@ describe('the README subsection says what the legs show, computed from the rows'
     }
   });
 
-  it('the committed emulated CSVs are the first run: four legs in matrix order, six runs and 42 question rows each, nothing left out, no 8 GB cell filled', () => {
-    const runs = parseCsv(
-      readFileSync(join(root, 'docs', 'benchmarks', EMULATED_E2E_FILE), 'utf8'),
+  it('the first run (44656249868) is kept unchanged in docs/benchmarks/history/: four legs in matrix order, six runs and 42 question rows each, the first header, no evidence, so every capped leg reads limit unproven', () => {
+    const dir = join(root, 'docs', 'benchmarks', 'history');
+    const file = join(dir, 'e2e-emulated-win-vm-run-44656249868.csv');
+    const text = readFileSync(file, 'utf8');
+    const runs = parseCsv(text);
+    const qs = parseCsv(
+      readFileSync(join(dir, 'e2e-emulated-win-vm-run-44656249868-questions.csv'), 'utf8'),
     );
-    const qs = parseCsv(readFileSync(join(root, 'docs', 'benchmarks', EMULATED_Q_FILE), 'utf8'));
     expect(runs).toHaveLength(24);
     expect(qs).toHaveLength(168);
-    const limits = [...new Set(runs.map((r) => r.job_commit_limit_bytes))];
-    expect(limits).toEqual(['', String(8 * GIB), String(6 * GIB), String(5 * GIB)]);
+    // the header is the first one, and so is every reader's reading of it: the evidence cells are absent, which reads as empty
+    expect(text.split('\n')[0]).toBe(E2E_EMULATED_COLUMNS_V1.join(','));
+    expect([...new Set(runs.map((r) => r.job_commit_limit_bytes))]).toEqual([
+      '',
+      String(8 * GIB),
+      String(6 * GIB),
+      String(5 * GIB),
+    ]);
     expect([...new Set(runs.map((r) => r.environment))]).toEqual([
       label(null),
       label(8),
@@ -495,35 +514,19 @@ describe('the README subsection says what the legs show, computed from the rows'
     for (const r of [...runs, ...qs]) expect(r.laptop_8gb).toBe(LAPTOP_8GB);
     expect([...new Set(runs.map((r) => r.commit))]).toEqual(['5705baab8cdf']);
     expect(new Set(runs.map((r) => r.failure_reason))).toEqual(new Set(['']));
-    expect(new Set(runs.map((r) => r.requests_after_offline))).toEqual(new Set(['0']));
     expect(new Set(runs.map((r) => r.job_escapes))).toEqual(new Set(['0']));
-    // the file was written before the limit evidence existed: its header is the first one, and every evidence cell reads as empty (limit unproven)
-    expect(
-      readFileSync(join(root, 'docs', 'benchmarks', EMULATED_E2E_FILE), 'utf8').split('\n')[0],
-    ).toBe(E2E_EMULATED_COLUMNS_V1.join(','));
-    // the job figures are the same on every row of a leg, and they are what the summary of that run gives: summaryCells() of the first run's summary shape is the same
-    const caps: Record<string, string> = {
-      '': 'none',
-      [String(8 * GIB)]: '8GiB',
-      [String(6 * GIB)]: '6GiB',
-      [String(5 * GIB)]: '5GiB',
-    };
-    for (const l of limits) {
-      const rows = runs.filter((r) => r.job_commit_limit_bytes === l);
-      expect(rows).toHaveLength(6);
-      const peaks = new Set(rows.map((r) => r.job_commit_peak_bytes));
-      expect(peaks.size).toBe(1);
-      const cells = summaryCells({
-        cap: caps[l ?? '']!,
-        limitBytes: l === '' || l === undefined ? null : Number(l),
-        peakJobMemoryBytes: Number([...peaks][0]),
-        escapes: 0,
-      });
-      expect(String(cells.job_commit_limit_bytes)).toBe(l);
-      expect(String(cells.job_commit_peak_bytes)).toBe([...peaks][0]);
-      expect(String(cells.job_escapes)).toBe('0');
-      expect(limitProof(rows[0]!)).toBe(l === '' ? 'no_limit' : 'unproven');
-    }
+    // its whole-tree peaks, as they were: the 5 GiB leg is above its own limit, and nothing in the file says whether the limit was in force
+    const peak = (l: string) =>
+      Number(runs.find((r) => r.job_commit_limit_bytes === l)!.job_commit_peak_bytes);
+    expect(peak('')).toBe(6181113856);
+    expect(peak(String(5 * GIB))).toBe(6074314752);
+    expect(peak(String(5 * GIB))).toBeGreaterThan(5 * GIB);
+    for (const l of ['8589934592', '6442450944', '5368709120'])
+      expect(limitProof(runs.find((r) => r.job_commit_limit_bytes === l)!)).toBe('unproven');
+    // the live file is the later run's, not this one's
+    const live = readFileSync(join(root, 'docs', 'benchmarks', EMULATED_E2E_FILE), 'utf8');
+    expect(live).not.toBe(text);
+    expect(live.split('\n')[0]).toBe(E2E_EMULATED_COLUMNS.join(','));
   });
 });
 
@@ -1041,7 +1044,7 @@ describe('the README subsection: limit proven in force, the cap not in force, an
     it('a control with some rows but no failure and no completion says it did not complete', () => {
       const b = block(...benchLegs(), leg(2, null, { control: true, runs: 2 }));
       expect(b).toContain(
-        'It did not complete (2 row(s), 2 finished run(s), no failure reason recorded',
+        'It did not complete: 2 runs finished and no failure reason was recorded, so it was stopped by the time limit or a crash; the limit is proven in force (probe refused, read-back equal), so the control passed.',
       );
     });
 

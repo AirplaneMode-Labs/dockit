@@ -135,6 +135,7 @@ const emulatedFields = (extra = {}) =>
         job_peak_after_probe_bytes: '',
         job_memory_limit_messages: '',
         control_leg: '',
+        probe_memory_limit_messages: '',
         ...extra,
       }
     : {};
