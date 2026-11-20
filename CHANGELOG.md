@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
+## [0.4.0-dev] - 2026-11-20 (untagged)
+
+Sprint 7 (an addition the owner asked for on 19 Nov 2026; theme: release readiness, TD-102; version 0.4.0-dev, TD-107; private, never published to a registry, not tagged). Every figure is from the
+Apple M5 Pro 48 GB and is not measured on 8 GB. Nothing about what the page does changed in this sprint; the work is the benchmark, its CI and its documents.
+
+### Added
+
+- The manual Windows benchmark, written and **not yet run** (B6, TD-113): `.github/workflows/bench-windows.yml` (`workflow_dispatch` only, no input, a fixed matrix of no limit, 8, 6 and 5 GiB; an ubuntu job builds `dist`
+  and hands it over for one day with a `dist-SHA256SUMS` list that the Windows job checks; results uploaded with `if: always()` for seven days), `scripts/win/run-capped.ps1` (a Windows Job Object with a committed-memory
+  limit around the pwsh, node and Chrome process tree, a few lines of C# through `Add-Type`, documented kernel32 calls only, the 144-byte struct size asserted before any call, Chrome's membership of the job checked every
+  2 seconds) and `scripts/win/README.md` (what only the first run can prove). `test/win-jobobject-text.test.ts` is a static check of the script's text. (D5-03)
+- `--environment "emulated: <what was run>; not a laptop"` for `bench:e2e`: the machine of every row is that label (never the word laptop outside its suffix, never an 8 GB figure), a CI runner without one is refused, the emulated
+  columns (`environment`, `job_commit_limit_bytes`, `job_commit_peak_bytes`, `process_commit_peak_bytes`, `job_escapes`, `sampler_median_interval_ms`, `failure_reason`) go in separate files
+  (`e2e-emulated-win-vm.csv`, `e2e-emulated-win-vm-questions.csv`), `e2e.csv` is never written in that mode, and `laptop_8gb` still reads `not measured on 8 GB`. `scripts/bench-emulated-merge.mjs` fills the job columns
+  from `job-summary.json`; the README gains an "Emulated Windows (not a laptop)" subsection only when the emulated CSV exists. (D5-02)
+- A crash or an out-of-memory fails a run within seconds with a reason (`scripts/lib/fail-fast.mjs`: `renderer_crash`, `browser_disconnected`, `worker_crash`, `out_of_memory`), races with every long wait of the harness, keeps the
+  rows written so far and exits 1; proved with simulated crashes in unit tests and a real `chrome://crash` in installed Chrome (`npm run test:failfast`, under 10 seconds). (D5-02)
+- The Windows sampler records the commit size (`PrivatePageCount`) next to the working set, writes UTF-8 without a byte-order mark, skips a null command line as a match, and reports its tick count and median interval. (D5-02)
+- `scripts/verify-model-cache.mjs`: a restored model cache is re-hashed against runtime's committed pins before anything uses it, and a mismatch stops the job. (D5-03)
+- `--dist <dir>` for `bench:e2e`; `launchOptions({ sandbox })` in the harness (the emulated run keeps Chrome's sandbox on). (D5-02)
+- Tests: the Playwright launch arguments hold none of the sandbox-weakening flags, the static server binds 127.0.0.1 only, no release key is in the application trust set (R4, S1-127), the workflow rules of `bench-windows.yml`,
+  the issue forms and the README's first screen. (D5-02, D5-03, D5-06)
+- Issue forms (a required "no real document" checkbox, a link to `SECURITY.md`, blank issues disabled), `docs/release.md` ("never published to a registry; the Pages deploy is the release", TD-117, TD-120), the
+  `Live demo:` line in the first screen of the README (TD-116). (D5-06)
+
+### Changed
+
+- `docs/benchmarks/e2e.csv` and `e2e-questions.csv` are the Sprint 6 build re-measured on a quiet machine (TD-101): dockit commit `4e6654f9e4ed`, built from fresh clones at the locked sibling commits, no `-dirty`. The median
+  Chrome process-tree peak is 5,436 MiB (Sprint 6's committed run: 5,441 MiB); the 5,120 MiB target is still **missed**; the question set is 24 of 36; the median per-question total is 11,304 ms. (D5-00)
+- Re-vendored spec release 0.6.1 (manifest 0.1.4, event 0.1.6, storage API 0.4.1; the other three contracts unchanged) from the digests of `LANDED.json`; `sync-contracts` reads them when `SPEC-LANDED.txt` is prose, and a
+  header that names an older contract version is drift. (D5-07)
+- The Sprint 7 status line and the "does not do yet" box: the emulated Windows figure is pending its first run. (D5-06)
+- Build tools (Dependabot #4 and #3, TD-112): vite 7.3.7 to 8.3.8 and @vitejs/plugin-react 5.2.0 to 6.3.0, applied together (plugin-react 6 needs vite 8): the lock moves 70 packages out (rollup and its platform packages, babel) and 35 in
+  (rolldown, lightningcss and their platform packages), nothing else; the dist CSP is byte-identical to `4e6654f` and the precache list is the same 205 entries in kind. The Node floor is 22.12 (`engines`, README), as the new tools require. (D5-05)
+- `scripts/check-lock-optionals.mjs` (with `scripts/lock-install-scripts.allow.json`): the lock stays hash-pinned, every native optional family has linux-x64-gnu, darwin-arm64 and win32-x64-msvc, and a new install-script package needs a named acceptance. (D5-05)
+
+### Fixed
+
+- The host-load columns are empty on Windows (`os.loadavg()` is always 0 there). (D5-02)
+
+### Security
+
+- Playwright adds Chrome's sandbox-off switch to every launch unless told not to: the emulated Windows run asks for the sandbox, the local default is unchanged and the README says so. (D5-02)
+- The bench-windows workflow has `contents: read` only, no secret, no input, a restore-only cache, a one-day artefact and every action pinned to a 40-hex SHA from the conventions table. (D5-03)
+
+### Deferred
+
+- `vitest` 5.1.0 (npm 10.9.8 crashes resolving its peers: `Cannot read properties of null (reading 'edgesOut')`), `typescript` 7.0.2 and `@types/node` 26.6.6 (TD-112); the reasons are in `dependabot.md` of the sprint evidence.
+- The private-repository 2 vCPU, 8 GB Windows runner (an owner option, not built), and importing the first emulated results (a follow-up after the dispatch).
+
 ## [0.3.0-dev] - 2026-11-19 (untagged)
 
 Sprint 6, build work started early on 19 Nov 2026 (version 0.3.0-dev, TD-69; private, not published, not tagged). Every figure is from the Apple M5 Pro 48 GB and is not measured on 8 GB.

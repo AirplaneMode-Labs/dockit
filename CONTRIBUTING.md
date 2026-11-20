@@ -14,6 +14,11 @@ Thank you for considering a contribution.
   Nothing phones home, no analytics, no fonts from a CDN.
 - British spelling in prose, no emojis.
 
+## Issues
+
+Use one of the forms under `.github/ISSUE_TEMPLATE/`. Never attach a real, confidential or personal document (bank, legal, medical, identity) to an issue or a
+pull request: a sample is synthetic or public, and anything you paste is redacted first. A vulnerability is reported privately, as `SECURITY.md` says, never in a public issue.
+
 ## Workflow
 
 ```sh

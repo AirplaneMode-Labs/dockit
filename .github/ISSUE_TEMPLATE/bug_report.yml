@@ -1,0 +1,28 @@
+name: Bug report
+description: Something does not work as the README says
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please redact before you paste: remove names, account numbers and anything from a real document. dockit works on documents that stay in your browser; this form must never hold one.
+        To report a vulnerability, do not open an issue: follow [SECURITY.md](https://github.com/AirplaneMode-Labs/dockit/blob/main/SECURITY.md) and report it privately.
+  - type: checkboxes
+    id: no-real-documents
+    attributes:
+      label: Documents
+      options:
+        - label: I have not attached any real, confidential or personal document (bank, legal, medical, identity). Any sample is synthetic or public.
+          required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: With the build id shown on the page (Built from main at ..., or Local build ...) and your Chrome version.
+    validations:
+      required: true

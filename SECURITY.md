@@ -11,6 +11,8 @@ report problems against it anyway.
 
 ## Reporting a vulnerability
 
+Report a vulnerability privately, by email: never in a public issue, and never with a real document attached.
+
 Email jtushar53@gmail.com with a description, the commit or version affected and, where
 possible, a reproduction. You will get an acknowledgement within seven days.
 

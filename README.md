@@ -3,14 +3,19 @@
 Offline document intelligence kit: an installable web app that answers a question about a PDF with a small local model, entirely
 in the browser tab. Built from the Airplane Mode Labs libraries (pagetriage, glyphsift, localdata, runtime).
 
+Live demo: https://airplanemode-labs.github.io/dockit/
+
+The package name `@airplanemode/dockit` is a placeholder until the registry handles are reserved; dockit is never published to a registry; the Pages deploy is the release.
+
 ## Status
 
-Sprint 6 (19 Nov 2026): Working: ask a question about a PDF and read an answer from a small local model (Qwen3-0.6B, WebAssembly) with the source pages shown, as before, now with one model in memory at a time: the Chrome process tree peaked at a median of 5,441 MiB, down from 6,307 MiB, short of the 5,120 MiB target (each median is of 5 in-session runs), with the fixed question set unchanged at 24 of 36 and every answer about 2.6 seconds slower (not measured on 8 GB); the capability card states the memory line read from the signed model list, a device that reports less is refused before any model byte is read, and an out-of-memory failure in the engine is a plain refusal; a PDF with a font, image or other part that unpacks to more than a limit, or whose structure cannot be checked, is refused before pdf.js opens it; a Stop is logged as aborted; after the one-time model download no request leaves the page (proved on a local build in installed Chrome on an Apple M5 Pro 48 GB, not measured on 8 GB; live since the owner's push of 18 Nov 2026). Not yet: OCR, a Windows or 8 GB figure, the pilot model (Qwen3-1.7B), a real signing key, WebLLM (cut), multi-document chat.
+Sprint 7 (20 Nov 2026): Working: the same app as Sprint 6 (ask a question about a PDF and read an answer from a small local model, Qwen3-0.6B in WebAssembly, with the source pages shown, one model in memory at a time; nothing about the page changed in Sprint 7); its memory figure was re-measured on a quiet machine on the committed Sprint 6 build: the Chrome process tree peaked at a median of 5,436 MiB, down from 6,307 MiB before the Sprint 6 memory work, still short of the 5,120 MiB target (each median is of 5 in-session runs), with the fixed question set at 24 of 36 and a median answer time of 11,304 ms (Apple M5 Pro 48 GB, not measured on 8 GB); a Windows benchmark under an emulated memory cap (a GitHub-hosted virtual machine, never a laptop) is written and has not run; after the one-time model download no request leaves the page (proved on a local build in installed Chrome on an Apple M5 Pro 48 GB, not measured on 8 GB; live since the owner's push of 18 Nov 2026). Not yet: OCR, a Windows or 8 GB laptop figure (an emulated Windows figure is pending its first run and would not be a laptop figure), the pilot model (Qwen3-1.7B), a real signing key, WebLLM (cut), multi-document chat.
 
-Done-when: build done on Apple M5 Pro 48 GB; 8 GB Windows done-when NOT met (owner runbook step 5). Sprint 6 changes no part of that: its figures are from the same
-Apple M5 Pro with 48 GB, and nothing has been measured on an 8 GB Windows laptop. The memory target of Sprint 6 (a median Chrome process-tree peak of at most
-5,120 MiB) was missed on this machine (see Benchmarks), so Sprint 6's own done-when is NOT met either. Version 0.3.0-dev (private, not published, not tagged;
-the package name `@airplanemode/dockit` is a placeholder and the registry names are not reserved).
+Done-when: build done on Apple M5 Pro 48 GB; 8 GB Windows done-when NOT met (owner runbook step 5). Sprint 7 changes no part of that: its figures are the Sprint 6 build
+re-measured on the same Apple M5 Pro with 48 GB (TD-101), nothing has been measured on an 8 GB Windows laptop, and the emulated Windows run (see Benchmarks) is written and has not run.
+The memory target of Sprint 6 (a median Chrome process-tree peak of at most 5,120 MiB) was missed on this machine (see Benchmarks), so Sprint 6's own done-when is NOT met either.
+Version 0.4.0-dev (private, never published to a registry; the Pages deploy is the release; not tagged; the package name `@airplanemode/dockit` is a placeholder and the registry names are
+not reserved). Gate 1 (two paid pilots, 300 stars, five qualified conversations) reads 0, 0 and 0; nothing in this repository moves it.
 
 ## What it does
 
@@ -60,7 +65,7 @@ plain-language message (a scanned PDF reads "This PDF has no text layer (it look
 
 ## Install
 
-Requirements: Node 22 or newer, npm, Google Chrome (Playwright uses the installed Chrome; no browser is downloaded), and the Rust 1.98 toolchain with
+Requirements: Node 22.12 or newer, npm, Google Chrome (Playwright uses the installed Chrome; no browser is downloaded), and the Rust 1.98 toolchain with
 the `wasm32-unknown-unknown` target for the sibling WebAssembly builds.
 
 ```sh
@@ -71,7 +76,7 @@ npm ci --ignore-scripts
 
 `.npmrc` disables install scripts, so nothing runs during `npm ci`. dockit is a private application (`@airplanemode/dockit`, `private: true`),
 deployed to GitHub Pages and built from a clone; it is not installed from npm, PyPI or crates.io. The npm scope `@airplanemode` and the registry names
-are not reserved and the name in `package.json` is a placeholder. Nothing is published.
+are not reserved and the name in `package.json` is a placeholder. Nothing is published, and dockit is never published to a registry; the Pages deploy is the release (`docs/release.md`).
 
 The page is built from four sibling repositories at the exact commits in `deps.lock.json` (runtime, localdata, pagetriage, glyphsift); their builds
 are never committed (`vendor/`, `public/models/`, `public/app/ort/` and `src/generated/` are git-ignored).
@@ -87,6 +92,7 @@ npm run test:e2e                                             # the offline end-t
 npm run test:gate                                            # the Devanagari gate in Chrome (local only)
 npm run test:browser                                         # the PWA and /dockit/ sub-path specs on the real build (local only)
 npm run bench:e2e                                            # the benchmark (local only)
+npm run test:failfast                                        # a real chrome://crash is recorded as renderer_crash within 10 seconds (local only)
 ```
 
 `assemble-deps` re-checks `git rev-parse HEAD` of each sibling against the lock (exit 2 on a mismatch) and refuses a tree with uncommitted changes
@@ -118,7 +124,7 @@ every 500 ms, summing `WorkingSetSize` over the Chrome processes of the test pro
 `profile <folder>`, always called `chrome-profile-...`). To watch the same figures by hand, in a second PowerShell window while `bench:e2e` runs
 (the loop is handed to the child in single quotes, so the outer shell does not expand `$true`; `''` is a single quote inside it; it lists the
 processes whose command line carries the test profile's `--user-data-dir`, so add up `WorkingSetSize` over the lines of one sample; the benchmark
-itself also adds the child processes that carry no such flag). **This sampler has never run on Windows**; the owner's run is the first.
+itself also adds the child processes that carry no such flag; since Sprint 7 it also reads `PrivatePageCount`, the commit size, next to the working set, and says how many ticks it got and how long they were apart). **This sampler has never run on Windows**; the first dispatch of the `bench-windows` workflow (below) or the owner's run is the first.
 
 ```powershell
 powershell.exe -NoProfile -Command 'while ($true) { Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like ''*--user-data-dir=*chrome-profile-*'' } | Select ProcessId,ParentProcessId,WorkingSetSize,CommandLine | ConvertTo-Json -Compress; Start-Sleep -Milliseconds 500 }'
@@ -146,14 +152,30 @@ and the workers' WebAssembly memory are different figures under their own names.
 Sprint 6 added a second pair of CSVs, taken before the memory measures with the same command on the same machine (`docs/benchmarks/e2e-s6-baseline.csv` and
 `e2e-questions-s6-baseline.csv`, TD-77); `e2e.csv` and `e2e-questions.csv` are the after. The first table below compares the two, and the outcome of the target that TD-66 stated before
 anything was measured is computed from them, not typed. The worker WebAssembly figure is the most memory the workers held at once (with one model at a time that is the answer model alone;
-Sprint 5 added the engines and the analysis worker because they lived together). The after-run's commit column reads `-dirty` because it was taken on the working tree; the architect
-re-runs it on the committed build at the wrap-up.
+Sprint 5 added the engines and the analysis worker because they lived together). The after pair was re-measured in Sprint 7 (TD-101) on the committed Sprint 6 build, measured on dockit commit `4e6654f9e4ed`: built from fresh clones at the commits in
+`deps.lock.json` exactly as `pages.yml` builds it (no `--allow-dirty`), on a quiet host (the `host_load_1m_start` and `host_load_1m_end` columns give the load of every run), the same command and the same
+Apple M5 Pro 48 GB as the baseline. No commit cell ends in `-dirty`.
 
 Process-tree peaks are comparable only between runs on a quiet host: a run taken while the machine is busy (a high load average, recorded in the host_load_1m_start and host_load_1m_end columns of newer CSVs) can read lower or higher than the same build on a quiet host. The stated figure is the quiet-host one.
 
 **Requests after offline = 0 counts application requests:** the ones made by the page, its workers and its service worker (a Chrome DevTools
 Protocol counter over every target). The browser itself may still check `/dockit/sw.js` for an update and fetch the favicon; this count does not include
 those two requests, and dockit's code makes neither of them.
+
+### The Windows benchmark under an emulated memory cap (not a laptop)
+
+The manual `bench-windows` workflow (`.github/workflows/bench-windows.yml`, `workflow_dispatch` only, no input) is the first Windows run of `bench:e2e`. An ubuntu job builds `dist` as `pages.yml`
+does and hands it over as a one-day artefact (with a `dist-SHA256SUMS` list that the Windows job checks before serving anything); a `windows-latest` job then runs the benchmark once per leg of a
+fixed matrix, **no limit, 8, 6 and 5 GiB**, with the pwsh, node and Chrome process tree inside a Windows Job Object whose committed-memory limit is the cap (`scripts/win/run-capped.ps1`, a few lines of C#
+through `Add-Type`, documented Win32 calls only, no new dependency; `scripts/win/README.md` lists what it does and what only the first run can prove). The runner is a GitHub-hosted Windows Server VM
+with 4 vCPU and 16 GB RAM, **not a laptop**, and a commit limit is not a physical-memory limit: with the memory behind it a capped job never pages, so a leg either fits or an allocation fails. The job limit
+covers the pwsh, node and Chrome process tree, not Chrome alone. Each row says so in an `environment` column, for example `emulated: GitHub-hosted Windows Server 2025 VM, x64, 4 vCPU, 16 GB RAM, pwsh, node and Chrome process tree under a job commit limit of 6442450944 bytes; not a laptop` (the first leg, with no cap, reads `... process tree with no job limit; not a laptop`; the limit is written in bytes, 8589934592, 6442450944 and 5368709120, because the label is built from the machine's own facts);
+the results go in separate files (`docs/benchmarks/e2e-emulated-win-vm.csv` and `e2e-emulated-win-vm-questions.csv`, never `e2e.csv`), `laptop_8gb` still reads `not measured on 8 GB` on every row, and the 8 GB Windows done-when stays NOT met.
+A crash or an out-of-memory in a leg ends it within seconds with a recorded reason (`renderer_crash`, `browser_disconnected`, `worker_crash` or `out_of_memory`) instead of waiting out the ten-minute answer timeout.
+**The workflow has not run.** The main session dispatches it once after the push and the results are imported in a follow-up; the benchmark tables below gain a subsection for the emulated results only then. The 2 vCPU, 8 GB
+runner of a private repository would be a closer stand-in for an 8 GB laptop but costs private-repository minutes; that route is **not built** and is the owner's option.
+
+Local runs launch Chrome through Playwright's default, which turns Chrome's own sandbox off; the Windows run keeps it on. The committed macOS figures are all taken the first way, so they are comparable with each other and not with a sandboxed run.
 
 <!-- prettier-ignore-start -->
 <!-- bench:start -->
@@ -162,14 +184,14 @@ those two requests, and dockit's code makes neither of them.
 | Run | Runs | Peak memory: Chrome process tree (median / worst) | Time to first token, ms (median / worst) | Total, first question, ms (median / worst) | Per-question total, every question of every run, ms (median / worst) | Question set | Requests after offline | Command | Commit | 8 GB laptop |
 |---|---|---|---|---|---|---|---|---|---|---|
 | Before: both models loaded together | 5 | 6,307 MiB / 6,336 MiB | 7,857 / 7,927 | 9,500 / 9,544 | 9,391 / 10,878 | 4 of 6 first run, 24 of 36 over all runs | 0 | `npm run bench:e2e` | `840ec8b0eba4` | not measured on 8 GB |
-| After: one model at a time | 5 | 5,441 MiB / 5,476 MiB | 8,092 / 8,180 | 11,982 / 12,283 | 11,950 / 13,281 | 4 of 6 first run, 24 of 36 over all runs | 0 | `npm run bench:e2e` | `840ec8b0eba4-dirty` | not measured on 8 GB |
+| After: one model at a time | 5 | 5,436 MiB / 5,446 MiB | 7,882 / 7,899 | 11,494 / 11,507 | 11,304 / 11,645 | 4 of 6 first run, 24 of 36 over all runs | 0 | `npm run bench:e2e` | `4e6654f9e4ed` | not measured on 8 GB |
 
-The target stated before measuring (TD-66) was a median peak of at most 5,120 MiB, the question set no worse than 24 of 36 over all runs and 4 of 6 on the first run, and a median per-question total of at most 12,500 ms. The median peak went from 6,307 MiB to 5,441 MiB, a fall of 867 MiB (13.7 percent). Each median is the median of the 5 in-session runs; the run after a Chrome restart is a separate row and is not in it. Differences and percentages are computed from the exact medians (the exact fall is 866.7 MiB, shown as 867 MiB) and then rounded, so a difference can differ by 1 MiB from the subtraction of the two rounded medians. The target was missed for memory; the question set was not worse than the floor; the time guard was reached (median per-question total 11,950 ms, against 9,391 ms before). Not measured on 8 GB.
+The target stated before measuring (TD-66) was a median peak of at most 5,120 MiB, the question set no worse than 24 of 36 over all runs and 4 of 6 on the first run, and a median per-question total of at most 12,500 ms. The median peak went from 6,307 MiB to 5,436 MiB, a fall of 871 MiB (13.8 percent). Each median is the median of the 5 in-session runs; the run after a Chrome restart is a separate row and is not in it. Differences and percentages are computed from the exact medians (the exact fall is 871.0 MiB, shown as 871 MiB) and then rounded, so a difference can differ by 1 MiB from the subtraction of the two rounded medians. The target was missed for memory; the question set was not worse than the floor; the time guard was reached (median per-question total 11,304 ms, against 9,391 ms before). Not measured on 8 GB.
 
 | Machine | Run kind | Runs | Time to first token, ms (median / worst) | Total, ms (median / worst) | Peak memory: Chrome process tree (median / worst) | JS heap peak (median / worst) | Worker WebAssembly memory peak (median / worst) | Requests after offline | Command | Commit | 8 GB laptop |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| Apple M5 Pro 48 GB | one session | 5 | 8,092 / 8,180 | 11,982 / 12,283 | 5,441 MiB / 5,476 MiB | 36 MiB / 51 MiB | 2,241 MiB / 2,241 MiB | 0 | `npm run bench:e2e` | `840ec8b0eba4-dirty` | not measured on 8 GB |
-| Apple M5 Pro 48 GB | after a Chrome restart | 1 | 8,397 / 8,397 | 12,385 / 12,385 | 5,228 MiB / 5,228 MiB | 33 MiB / 33 MiB | 2,241 MiB / 2,241 MiB | 0 | `npm run bench:e2e` | `840ec8b0eba4-dirty` | not measured on 8 GB |
+| Apple M5 Pro 48 GB | one session | 5 | 7,882 / 7,899 | 11,494 / 11,507 | 5,436 MiB / 5,446 MiB | 36 MiB / 50 MiB | 2,241 MiB / 2,241 MiB | 0 | `npm run bench:e2e` | `4e6654f9e4ed` | not measured on 8 GB |
+| Apple M5 Pro 48 GB | after a Chrome restart | 1 | 7,885 / 7,885 | 11,447 / 11,447 | 5,268 MiB / 5,268 MiB | 36 MiB / 36 MiB | 2,241 MiB / 2,241 MiB | 0 | `npm run bench:e2e` | `4e6654f9e4ed` | not measured on 8 GB |
 
 Question set (seven fixed questions over a synthetic three-page policy, results not selected): 4 of 6 correct with the correct source page on the first run; 24 of 36 over all 6 runs; the question with no answer was refused in 6 of 6 runs.
 
@@ -193,10 +215,10 @@ text AND `correct_source_page`.
   this browser profile (the warning is shown next to the option). By default documents stay in memory, and Delete removes them physically.
 - **What "Keep on this device" stores:** a kept document holds its chunk text, embeddings, page numbers and the file's SHA-256, all unencrypted. The
   hash can confirm whether a known document was processed. The warning next to the option says the same.
-- **Not measured on 8 GB.** Every figure here is from an Apple M5 Pro with 48 GB. Nothing has run on Windows. Sprint 6 cut the Chrome process-tree peak during a question <!--fig:cut-->from a median of 6,307 MiB to 5,441 MiB (worst 5,476 MiB; median of the 5 in-session runs)<!--/fig--> by holding one model at a time, but the target of at most 5,120 MiB was **missed**, so there is still a reason to expect trouble on
+- **Not measured on 8 GB.** Every figure here is from an Apple M5 Pro with 48 GB. No Windows figure exists yet: nothing has run on Windows, and the emulated Windows run is written and has not run (a GitHub-hosted VM with a job commit limit is not a laptop, and its figures will never fill an 8 GB cell). Sprint 6 cut the Chrome process-tree peak during a question <!--fig:cut-->from a median of 6,307 MiB to 5,436 MiB (worst 5,446 MiB; median of the 5 in-session runs)<!--/fig--> by holding one model at a time, but the target of at most 5,120 MiB was **missed**, so there is still a reason to expect trouble on
   8 GB: the answer model alone holds about 2,241 MiB of WebAssembly memory while it answers. The sum counts a page shared between processes in each of them, so it overstates the memory
   used; whether the demo fits an 8 GB Windows laptop is exactly what the runbook run above measures.
-- **Every question loads the embedder and then the answer model again from this device (Sprint 6).** Holding one model at a time is what lowers the peak, and its price is time: <!--fig:time-->the median per-question total went from 9,391 ms to 11,950 ms (worst 13,281 ms)<!--/fig-->, and the two loads of one question take about 2.3 seconds in all (2,180 and 2,395 ms in the two Stop-then-Ask
+- **Every question loads the embedder and then the answer model again from this device (Sprint 6).** Holding one model at a time is what lowers the peak, and its price is time: <!--fig:time-->the median per-question total went from 9,391 ms to 11,304 ms (worst 11,645 ms)<!--/fig-->, and the two loads of one question take about 2.3 seconds in all (2,180 and 2,395 ms in the two Stop-then-Ask
   runs of `npm run test:e2e`, which prints each one). Every load is a first load: the stored manifest is re-verified, the files are read from the cache and hashed in the worker, nothing is
   downloaded and the page is not reloaded; the model card reads "Loading the model again from this device..." and Ask stays disabled until the loads are done. **Not measured on 8 GB**: the
   model bundle is 754 MiB, so expect longer there.
@@ -212,7 +234,7 @@ text AND `correct_source_page`.
   bundle belong together, not who published them (pre-pilot rows 1 and 2 are the owner's).
 - No WebLLM (cut, TD-08), no multi-document chat, no encryption at rest. The CSP is delivered by a meta tag, which cannot set `frame-ancestors`; a framed
   copy shows only a link to open dockit directly.
-- Tested in Chrome only (Playwright channel `chrome`). Firefox and Safari are untested. CI runs `npm run ci` (formatting, types, unit tests and a stub build) on three operating systems; the browser, end-to-end, gate and benchmark runs need the sibling builds and the 754 MiB model bundle, so they run locally and on the owner's laptop, never in CI.
+- Tested in Chrome only (Playwright channel `chrome`), launched through Playwright's default, which turns Chrome's sandbox off for the local specs and the macOS benchmark; only the Windows emulated run keeps the sandbox on. Firefox and Safari are untested. CI runs `npm run ci` (formatting, types, unit tests and a stub build) on three operating systems; the browser, end-to-end, gate and benchmark runs need the sibling builds and the 754 MiB model bundle, so they run locally and on the owner's laptop, never in CI.
 - Chrome 157: a model file written less than about a second ago can fail its first read by the engine; the load is retried once after 1.5 s (`LOAD_RETRY_PAUSE_MS`). The cause is not understood and is not fixed in dockit.
 - pdf.js drops U+200C and U+200D from the text it extracts, so a joiner in a text layer never reaches dockit.
 - **A hostile PDF that hides a very large compressed font or image is refused before pdf.js opens it (S1-107, Sprint 6); a damaged file that other readers would repair is refused too.**
@@ -270,4 +292,5 @@ each with its source repository and pinned revision, and the four sibling builds
 ## Contributing
 
 See `CONTRIBUTING.md`. Tests come before the implementation, and CI must stay green on Linux, macOS and Windows (`npm run ci`). The contracts in
-`src/contracts/` are vendored from `runtime/spec` (spec release 0.5.0) and are never edited here: `npm run sync-contracts`.
+`src/contracts/` are vendored from `runtime/spec` (spec release 0.6.1) and are never edited here: `npm run sync-contracts`. Open an issue with one of the forms under
+`.github/ISSUE_TEMPLATE/` (the bug form asks you to confirm that you attached no real, confidential or personal document); report a vulnerability as `SECURITY.md` says, privately.

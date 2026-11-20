@@ -1,0 +1,13 @@
+name: Feature request
+description: Suggest something dockit could do
+body:
+  - type: markdown
+    attributes:
+      value: |
+        dockit is a reference app: it answers a question about a PDF in the browser, offline. Please check the "Limitations" section of the README first.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like to do, and why?
+    validations:
+      required: true
